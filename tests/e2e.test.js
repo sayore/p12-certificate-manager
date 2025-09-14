@@ -19,6 +19,68 @@ let clientCertSerial = "";
 let serverCertSerial = "";
 let clean = false;
 
+let pgpTestPromise = null;
+
+let pgpKeyFingerprint = '';
+let pgpJobData = null; // NEU: Eine globale Variable, um die Job-Infos zu speichern
+
+// ----- FILE: tests/e2e.test.js -----
+
+// ... (nach der runTest-Funktion)
+
+// NEUE, EIGENSTÄNDIGE FUNKTION FÜR DEN GESAMTEN PGP-TEST
+async function runPgpTestLifecycle() {
+    await runTest('[PGP Lifecycle] Start, Poll & Verify', async () => {
+        // --- Teil 1: Job starten ---
+        log('--- [PGP] Starting PGP Key Generation Job ---', 'blue');
+        const name = `PGP Test User ${Date.now()}`;
+        const email = `pgp-test-${Date.now()}@example.com`;
+        
+        const params = new URLSearchParams();
+        params.append('name', name);
+        params.append('email', email);
+        params.append('password', 'pgp-test-password');
+        params.append('caPassword', testCaPassword);
+
+        const startResponse = await client.post(`/api/ca/${testCaName}/generate-pgp`, params);
+        if (startResponse.status !== 202) throw new Error(`Expected 202, got ${startResponse.status}`);
+        
+        const jobData = startResponse.data;
+        if (!jobData.jobId) throw new Error('Server did not return a jobId.');
+        log(`   -> [PGP] Job [${jobData.jobId}] started. Polling for completion...`, 'info');
+
+        // --- Teil 2: Auf Job-Abschluss warten ---
+        let jobStatus = '';
+        for (let i = 0; i < 60; i++) {
+            const statusResponse = await client.get(jobData.statusUrl);
+            jobStatus = statusResponse.data.status;
+            if (jobStatus === 'completed' || jobStatus === 'failed') break;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (jobStatus !== 'completed') throw new Error(`PGP job did not complete. Final status: ${jobStatus}`);
+        log(`   -> [PGP] Job finished with status: ${jobStatus}`, 'info');
+
+        // --- Teil 3: Ergebnis auf der UI-Seite verifizieren ---
+        const getResponse = await client.get(`/ca/${testCaName}/pgp`);
+        const $ = cheerio.load(getResponse.data);
+        const keyRow = $(`td:contains("${email}")`).closest('tr');
+        if (keyRow.length === 0) throw new Error('New PGP key was not found in the table.');
+
+        const fingerprint = keyRow.find('td').eq(1).find('small').text().trim();
+        if (!fingerprint) throw new Error('Could not extract PGP key fingerprint.');
+        log(`   -> [PGP] Key for "${email}" found on page with fingerprint.`, 'info');
+
+        // --- Teil 4: Public Key Endpoint testen ---
+        const pubKeyResponse = await client.get(`/ca/${testCaName}/pgp/${fingerprint}/pub`);
+        if (pubKeyResponse.status !== 200) throw new Error(`PGP public key endpoint failed.`);
+        const publicKey = pubKeyResponse.data;
+        if (!publicKey.startsWith('-----BEGIN PGP PUBLIC KEY BLOCK-----')) {
+            throw new Error('Response is not a valid PGP public key block.');
+        }
+        log(`   -> [PGP] Public key endpoint successfully verified.`, 'info');
+    });
+}
+
 const report = { passed: 0, failed: 0, failures: [] };
 // Diese `runTest` Funktion wird LOKAL in dieser Datei verwendet, um die einzelnen Schritte auszuführen.
 const runTest = async (name, testFn) => {
@@ -91,6 +153,7 @@ const tests = {
     if ($(`a[href="/ca/${testCaName}"]`).length === 0)
       throw new Error("Link to new CA not found.");
   },
+
 
   '[Step 4] Issue a Client Certificate': async () => {
         const commonName = `client-${Date.now()}@test.com`;
@@ -275,48 +338,7 @@ const tests = {
     }
     // --- ENDE DER KORREKTUR ---
   },
-  '[Step 8] Generate a PGP Key (Async Job)': async () => {
-        log('--- Testing PGP Key Generation (Async Job) ---', 'blue');
-        const name = `PGP Test User ${Date.now()}`;
-        const email = `pgp-test-${Date.now()}@example.com`;
-        
-        // NEU: Wir navigieren zuerst zur PGP-Seite, um das Formular zu finden
-        await client.get(`/ca/${testCaName}/pgp`);
 
-        const params = new URLSearchParams();
-        params.append('name', name);
-        params.append('email', email);
-        params.append('password', 'pgp-test-password');
-        params.append('caPassword', testCaPassword);
-
-        // Die URL für die API bleibt gleich
-        const startResponse = await client.post(`/api/ca/${testCaName}/generate-pgp`, params);
-        if (startResponse.status !== 202) throw new Error(`Expected 202, got ${startResponse.status}`);
-        const { jobId, statusUrl } = startResponse.data;
-        if (!jobId) throw new Error('Server did not return a jobId.');
-        log(`   -> INFO: Job [${jobId}] started successfully. Polling status...`, 'info');
-
-        // Polling-Logik bleibt unverändert
-        let jobStatus = '';
-        for (let i = 0; i < 30; i++) { // Timeout etwas erhöht für 4096-bit Keys
-            const statusResponse = await client.get(statusUrl);
-            jobStatus = statusResponse.data.status;
-            if (jobStatus === 'completed' || jobStatus === 'failed') break;
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        if (jobStatus !== 'completed') throw new Error(`PGP job did not complete. Final status: ${jobStatus}`);
-        log(`   -> INFO: Job finished with status: ${jobStatus}`, 'info');
-
-        // NEU: Lade die PGP-Seite, um das Ergebnis zu verifizieren
-        const getResponse = await client.get(`/ca/${testCaName}/pgp`);
-        const $ = cheerio.load(getResponse.data);
-        const keyRow = $(`td:contains("${email}")`).closest('tr');
-        if (keyRow.length === 0) throw new Error('New PGP key was not found in the table.');
-
-        pgpKeyFingerprint = keyRow.find('td').eq(1).find('small').text().trim();
-        if (!pgpKeyFingerprint) throw new Error('Could not extract PGP key fingerprint.');
-        log(`   -> SUCCESS: PGP key for "${email}" created and found on PGP page.`, 'info');
-    },
 
   "[Step 9] Verify PGP Public Key Endpoint": async () => {
     log("--- Testing PGP Public Key Endpoint ---", "blue");
@@ -479,6 +501,7 @@ const tests = {
     }
     log("   -> SUCCESS: Snippet for verify=on generated correctly.", "info");
   },
+      
 };
 
 // --- Haupt-Runner-Logik, die am Ende dieser Datei steht ---
@@ -517,9 +540,16 @@ const runAllTests = async () => {
     process.exit(1);
   }
   try {
-    for (const testName in tests) {
-      await runTest(testName, tests[testName]);
-    }
+    pgpTestPromise = runPgpTestLifecycle();
+
+        // Führe alle sequenziellen, schnellen Tests aus
+        for (const testName in tests) {
+            await runTest(testName, tests[testName]);
+        }
+
+        // GANZ AM ENDE: Warte auf den Abschluss des PGP-Tests
+        log('--- Waiting for PGP test lifecycle to complete... ---', 'blue');
+        await pgpTestPromise;
   } catch (error) {
     // Fehler wurde bereits geloggt
   } finally {
