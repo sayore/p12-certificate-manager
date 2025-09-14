@@ -1,0 +1,20 @@
+//- FILE: views/partials/sidebar.pug
+
+.sidebar
+  .logo CA Master
+  nav
+    ul.nav-list
+      li
+        a.nav-link(href="/") CA Übersicht
+      //- Menüpunkte, die nur sichtbar sind, wenn eine CA ausgewählt ist
+      if caName
+        li
+          //- Wir übergeben eine 'activePage'-Variable von der Route, um den aktiven Link zu markieren
+          a.nav-link(class=(activePage === 'dashboard' ? 'active' : ''),href=`/ca/${caName}`)
+            | Dashboard
+        li
+          a.nav-link(class=(activePage === 'x509' ? 'active' : ''),href=`/ca/${caName}/x509`)
+            | X.509 Management
+        li
+          a.nav-link(class=(activePage === 'pgp' ? 'active' : ''),href=`/ca/${caName}/pgp`)
+            | PGP Management

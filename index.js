@@ -7,6 +7,7 @@ const fs = require('fs');
 const basicAuth = require('express-basic-auth');
 const helmet = require('helmet');
 const cors = require('cors');
+const archiver = require('archiver');
 
 const app = express();
 
@@ -16,6 +17,7 @@ const x509Service = require('./services/x509Service');
 const pgpService = require('./services/pgpService');
 const { runTest } = require('./util/tests');
 const { getJob } = require('./services/job-manager');
+const { decrypt } = require('./services/utils');
 
 // --- Konfiguration ---
 const PORT = process.env.PORT || 3000;
@@ -30,9 +32,11 @@ app.set('views', path.join(__dirname, 'views'));
 
 function getCommonNameBySerial(caName, serial) {
     const db = x509Service.parseCaDatabase(caName);
-    const cert = db.find(c => c.serial === serial);
-    if (!cert) throw new Error('Certificate not found for this serial.');
-    return cert.commonName;
+    // KORREKTUR: Wir trimmen beide Werte und vergleichen sie case-insensitiv.
+    const cert = db.find(c => c.serial.trim().toLowerCase() === serial.trim().toLowerCase());
+    if (!cert) return null;
+    // KORREKTUR: Wir geben den getrimmten Common Name zurück.
+    return cert.commonName.trim();
 }
 
 // =======================================================
@@ -72,10 +76,12 @@ app.get('/ca/:caName/pgp/:fingerprint/pub', async (req, res) => {
 
 app.post('/api/ca/:caName/generate-pgp', async (req, res) => { // 1. Route als `async` deklarieren
     const { caName } = req.params;
-    const { name, email, password } = req.body;
+    const { name, email, password, caPassword } = req.body; 
     try {
-        if (!password) throw new Error('A password is required.');
-        const job = await pgpService.generatePgpKey(caName, name, email, password); // 2. Auf das Ergebnis warten
+        if (!password || !caPassword) {
+            throw new Error('A PGP password and the CA password are required.');
+        }
+        const job = await pgpService.generatePgpKey(caName, name, email, password, caPassword);
         res.status(202).json({ 
             message: 'PGP key generation started.',
             jobId: job.id,
@@ -124,6 +130,9 @@ const webAuth = basicAuth({
     realm: 'CA Master Control',
 });
 app.use(webAuth);
+const apiAuth = basicAuth({
+    users: { [process.env.ADMIN_USER]: process.env.ADMIN_PASSWORD },
+});
 
 
 // =======================================================
@@ -154,11 +163,36 @@ app.get('/ca/:caName', async (req, res) => {
     const { caName } = req.params;
     try {
         const x509Certs = x509Service.parseCaDatabase(caName);
-        const pgpKeys = await pgpService.listPgpKeys(caName); // PGP-Schlüssel laden
-        res.render('ca_dashboard', { caName, x509Certs, pgpKeys }); // An das Template übergeben
+        const pgpKeys = await pgpService.listPgpKeys(caName);
+        // NEU: 'activePage' übergeben, damit das Menü den richtigen Link markiert
+        res.render('ca_dashboard', { caName, x509Certs, pgpKeys, activePage: 'dashboard' });
     } catch (error) {
         req.flash('error', `Fehler beim Laden des Dashboards: ${error.message}`);
         res.redirect('/');
+    }
+});
+
+// NEU: Route für die X.509-Management-Seite
+app.get('/ca/:caName/x509', async (req, res) => {
+    const { caName } = req.params;
+    try {
+        const x509Certs = x509Service.parseCaDatabase(caName);
+        res.render('ca_x509', { caName, x509Certs, activePage: 'x509' });
+    } catch (error) {
+        req.flash('error', `Fehler beim Laden der X.509-Seite: ${error.message}`);
+        res.redirect(`/ca/${caName}`);
+    }
+});
+
+// NEU: Route für die PGP-Management-Seite
+app.get('/ca/:caName/pgp', async (req, res) => {
+    const { caName } = req.params;
+    try {
+        const pgpKeys = await pgpService.listPgpKeys(caName);
+        res.render('ca_pgp', { caName, pgpKeys, activePage: 'pgp' });
+    } catch (error) {
+        req.flash('error', `Fehler beim Laden der PGP-Seite: ${error.message}`);
+        res.redirect(`/ca/${caName}`);
     }
 });
 
@@ -187,6 +221,26 @@ app.post('/ca/:caName/issue-server', async (req, res) => {
     res.redirect(`/ca/${caName}`);
 });
 
+app.post('/ca/:caName/issue-cert', async (req, res) => {
+    const { caName } = req.params;
+    const { certType, commonName, altNames, caPassword } = req.body;
+
+    try {
+        if (certType === 'client') {
+            await x509Service.issueClientCert(caName, caPassword, commonName);
+            req.flash('success', `Client-Zertifikat für "${commonName}" erfolgreich ausgestellt.`);
+        } else if (certType === 'server') {
+            await x509Service.issueServerCert(caName, caPassword, commonName, altNames);
+            req.flash('success', `Server-Zertifikat für "${commonName}" erfolgreich ausgestellt.`);
+        } else {
+            throw new Error('Ungültiger Zertifikatstyp.');
+        }
+    } catch (error) {
+        req.flash('error', `Fehler beim Ausstellen des Zertifikats: ${error.message}`);
+    }
+    res.redirect(`/ca/${req.params.caName}/x509`); 
+});
+
 app.post('/ca/:caName/revoke-x509', async (req, res) => {
     const { caName } = req.params;
     const { serial, caPassword } = req.body;
@@ -202,18 +256,16 @@ app.post('/ca/:caName/revoke-x509', async (req, res) => {
 // PGP Aktionen für das WEB-UI
 app.post('/ca/:caName/generate-pgp', async (req, res) => {
     const { caName } = req.params;
-    const { name, email, password } = req.body;
+    const { name, email, password, caPassword } = req.body;
     try {
-        if (!password) throw new Error('A password is required.');
-        // Diese Funktion startet den Job, aber wir warten hier nicht auf das Ergebnis
-        pgpService.generatePgpKey(caName, name, email, password);
-        // Wir setzen eine Erfolgsmeldung, die "wird erstellt" sagt
-        req.flash('success', `PGP-Schlüsselerstellung für "${name} <${email}>" wurde gestartet.`);
+         if (!password || !caPassword) throw new Error('PGP-Passwort und CA-Passwort werden benötigt.');
+        pgpService.generatePgpKey(caName, name, email, password, caPassword);
+        req.flash('success', `PGP-Schlüsselerstellung wurde gestartet.`);
     } catch (error) {
         req.flash('error', `Fehler beim Starten der PGP-Schlüsselerstellung: ${error.message}`);
     }
     // Leite sofort um, damit das UI nicht blockiert
-    res.redirect(`/ca/${caName}`);
+    res.redirect(`/ca/${req.params.caName}/pgp`);
 });
 
 app.get('/ca/:caName/pgp/:fingerprint/pub', async (req, res) => {
@@ -249,54 +301,173 @@ app.get('/api/ca/:caName/snippets/:commonName', (req, res) => {
     res.json({ nginx: nginxSnippet.trim(), apache: apacheSnippet.trim() });
 });
 
-app.post('/ca/:caName/download/x509/:serial/p12', (req, res) => {
+app.get('/ca/:caName/download/x509/:serial/p12', webAuth, (req, res) => {
+    const { caName, serial } = req.params;
     try {
-        const { caName, serial } = req.params;
-        // Das CA-Passwort wird hier nicht benötigt, ist aber für die Zukunft reserviert
         const commonName = getCommonNameBySerial(caName, serial);
+        if (!commonName) {
+            throw new Error('Zertifikat mit dieser Seriennummer nicht in der Datenbank gefunden.');
+        }
+
+        // Der Pfad zur .p12-Datei
         const p12File = path.join(caService.caBaseDir, caName, 'issued', commonName, `${commonName}.p12`);
 
         if (fs.existsSync(p12File)) {
-            res.download(p12File); // res.download kümmert sich um die richtigen Header
+            // res.download() kümmert sich um alles Weitere
+            return res.download(p12File);
         } else {
-            req.flash('error', '.p12-Datei nicht gefunden. Möglicherweise wurde sie vor der Implementierung dieser Funktion erstellt.');
-            res.redirect(`/ca/${caName}`);
+            throw new Error('.p12-Datei auf dem Dateisystem nicht gefunden. Wurde sie korrekt erstellt?');
         }
     } catch (error) {
-        req.flash('error', `Download-Fehler: ${error.message}`);
-        res.redirect(`/ca/${req.params.caName}`);
+        console.error("P12 Download Error:", error);
+        return res.status(500).render('error_page', {
+            caName: req.params.caName,
+            errorMessage: `Download-Fehler: ${error.message}`,
+            activePage: 'x509'
+        });
     }
 });
 
-app.post('/ca/:caName/download/x509/:serial/zip', (req, res) => {
+app.post('/ca/:caName/pgp/:fingerprint/download-private', async (req, res) => {
+    const { caName, fingerprint } = req.params;
+    const { caPassword } = req.body;
     try {
-        const { caName, serial } = req.params;
+        if (!caPassword) throw new Error('CA-Passwort ist erforderlich.');
+
+        // Die Logik zum Finden und Entschlüsseln des Passworts ist identisch zu oben
+        const keyInfo = (await pgpService.listPgpKeys(caName)).find(k => k.fingerprint === fingerprint);
+        if (!keyInfo) throw new Error('Schlüssel nicht gefunden.');
+        
+        const emailMatch = keyInfo.uids[0].match(/<([^>]+)>/);
+        const email = emailMatch ? emailMatch[1] : null;
+        let secretFile = path.join(caService.caBaseDir, caName, 'gpg', `${fingerprint}.secret`);
+        if (!fs.existsSync(secretFile) && email) {
+            secretFile = path.join(caService.caBaseDir, caName, 'gpg', `${email}.secret`);
+        }
+        if (!fs.existsSync(secretFile)) {
+            throw new Error('Passwort-Datei (.secret) nicht gefunden.');
+        }
+
+        const encryptedPassword = fs.readFileSync(secretFile, 'utf-8');
+        const decryptedPgpPassword = decrypt(encryptedPassword, caPassword);
+
+        // Exportiere den privaten Schlüssel mit dem entschlüsselten Passwort
+        const privateKeyBlock = await pgpService.exportPgpPrivateKey(caName, fingerprint, decryptedPgpPassword);
+
+        // Sende den Schlüssel als Datei-Download
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename="${fingerprint}.private.asc"`);
+        res.send(privateKeyBlock);
+
+    } catch (error) {
+        console.error(`Download failed for PGP private key ${fingerprint}:`, error.message);
+        // Wir rendern die Fehlerseite mit klarem Feedback.
+        // Status 422: Unprocessable Entity - Die Anfrage war syntaktisch korrekt,
+        // konnte aber aufgrund semantischer Fehler (falsches Passwort) nicht verarbeitet werden.
+        res.status(422).render('error_page', {
+            caName: caName,
+            errorMessage: `Fehler beim Export des privaten Schlüssels. Ist das CA-Passwort korrekt? (Details: ${error.message})`,
+            // Setzen Sie die activePage, damit das Seitenmenü korrekt bleibt
+            activePage: 'pgp' 
+        });
+    }
+});
+
+app.post('/ca/:caName/pgp/:fingerprint/show-password', async (req, res) => {
+    const { caName, fingerprint } = req.params;
+    const { caPassword } = req.body;
+    try {
+        if (!caPassword) throw new Error('CA-Passwort ist erforderlich.');
+
+        // 1. Finde den Schlüssel, um die .secret-Datei zu lokalisieren
+        const keyInfo = (await pgpService.listPgpKeys(caName)).find(k => k.fingerprint === fingerprint);
+        if (!keyInfo) throw new Error('Schlüssel nicht gefunden.');
+
+        // 2. Finde die Secret-Datei (primär nach Fingerprint, fallback auf E-Mail)
+        const emailMatch = keyInfo.uids[0].match(/<([^>]+)>/);
+        const email = emailMatch ? emailMatch[1] : null;
+        let secretFile = path.join(caService.caBaseDir, caName, 'gpg', `${fingerprint}.secret`);
+        if (!fs.existsSync(secretFile) && email) {
+            secretFile = path.join(caService.caBaseDir, caName, 'gpg', `${email}.secret`);
+        }
+        if (!fs.existsSync(secretFile)) {
+            throw new Error('Passwort-Datei (.secret) für diesen Schlüssel nicht gefunden.');
+        }
+
+        // 3. Entschlüssle das Passwort
+        const encryptedPassword = fs.readFileSync(secretFile, 'utf-8');
+        const decryptedPassword = decrypt(encryptedPassword, caPassword);
+
+        // 4. Zeige es als Flash-Nachricht an
+        req.flash('success', `Passwort für Schlüssel ${fingerprint.substring(0, 16)}... lautet: ${decryptedPassword}`);
+    } catch (error) {
+        req.flash('error', `Passwort konnte nicht abgerufen werden. Ist das CA-Passwort korrekt? (${error.message})`);
+    }
+    res.redirect(`/ca/${caName}/pgp`);
+});
+
+app.get('/ca/:caName/download/x509/:serial/zip', webAuth, (req, res) => {
+    const { caName, serial } = req.params;
+    console.log(`\n--- [DEBUG Download ZIP] START for CA '${caName}', Serial '${serial}' ---`);
+
+    try {
         const commonName = getCommonNameBySerial(caName, serial);
+        if (!commonName) {
+            console.error('[DEBUG Download ZIP] FAIL: Common Name nicht in der DB gefunden.');
+            throw new Error('Zertifikat mit dieser Seriennummer nicht in der Datenbank gefunden.');
+        }
+        console.log(`[DEBUG Download ZIP] OK: Common Name aus DB erhalten: '${commonName}'`);
 
         const issuedDir = path.join(caService.caBaseDir, caName, 'issued', commonName);
         const certFile = path.join(issuedDir, `${commonName}.crt`);
         const keyFile = path.join(issuedDir, `${commonName}.key`);
         const caCertFile = path.join(caService.caBaseDir, caName, 'ca.crt');
 
-        if (!fs.existsSync(certFile) || !fs.existsSync(keyFile)) {
-             req.flash('error', 'Zertifikatsdateien nicht gefunden.');
-             return res.redirect(`/ca/${caName}`);
+        // --- HIER IST DAS ENTSCHEIDENDE DEBUGGING ---
+        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für .crt: ${certFile}`);
+        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für .key: ${keyFile}`);
+        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für ca.crt: ${caCertFile}`);
+        
+        const certExists = fs.existsSync(certFile);
+        const keyExists = fs.existsSync(keyFile);
+        const caCertExists = fs.existsSync(caCertFile);
+
+        console.log(`[DEBUG Download ZIP] Prüfung: .crt existiert? -> ${certExists}`);
+        console.log(`[DEBUG Download ZIP] Prüfung: .key existiert? -> ${keyExists}`);
+        console.log(`[DEBUG Download ZIP] Prüfung: ca.crt existiert? -> ${caCertExists}`);
+        // ---------------------------------------------
+
+        if (!certExists || !keyExists || !caCertExists) {
+             throw new Error('Eine oder mehrere Zertifikatsdateien wurden auf dem Dateisystem nicht gefunden.');
         }
 
+        console.log(`[DEBUG Download ZIP] OK: Alle Dateien gefunden. Starte ZIP-Archivierung.`);
         const archive = archiver('zip', { zlib: { level: 9 } });
         
-        res.setHeader('Content-Type', 'application/zip');
-        res.setHeader('Content-Disposition', `attachment; filename=${commonName}.zip`);
+        archive.on('error', function(err) { throw err; });
 
+        const sanitizedCommonName = commonName.replace(/[^a-zA-Z0-9\.\-\_]/g, '_');
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename=${commonName.replace(/[^a-zA-Z0-9\.\-\_]/g, '_')}.zip`);
+        
         archive.pipe(res);
-        archive.file(certFile, { name: `${commonName}.crt` });
-        archive.file(keyFile, { name: `${commonName}.key` });
+        archive.file(certFile, { name: `${sanitizedCommonName}_${serial}.crt` });
+        archive.file(keyFile, { name: `${sanitizedCommonName}_${serial}.key` });
         archive.file(caCertFile, { name: 'ca.crt' });
-        archive.finalize();
+        
+        console.log(`[DEBUG Download ZIP] OK: Archivierung abgeschlossen.`);
+        console.log(`--- [DEBUG Download ZIP] END ---`);
+        return archive.finalize();
 
     } catch (error) {
-        req.flash('error', `ZIP-Erstellungsfehler: ${error.message}`);
-        res.redirect(`/ca/${req.params.caName}`);
+        console.error(`[DEBUG Download ZIP] FAIL: Fehler im Catch-Block: ${error.message}`);
+        console.log(`--- [DEBUG Download ZIP] END ---`);
+        return res.status(500).render('error_page', {
+            caName: req.params.caName,
+            errorMessage: `ZIP-Erstellungsfehler: ${error.message}`,
+            activePage: 'x509'
+        });
     }
 });
 

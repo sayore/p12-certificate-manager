@@ -1,10 +1,14 @@
 const fs = require('fs');
 const path = require('path');
-const { runCommand } = require('./utils');
 const { caBaseDir } = require('./caService');
 const { runJob } = require('./job-manager');
+const { runCommand, encrypt, decrypt } = require('./utils'); 
 
-async function generatePgpKey(caName, name, email, password) {
+// ----- FILE: services/pgpService.js -----
+
+// ... imports ...
+
+async function generatePgpKey(caName, name, email, pgpPassword, caPassword) {
     const gpgHome = path.join(caBaseDir, caName, 'gpg');
     const paramFile = path.join(gpgHome, 'gpg-params.txt');
     
@@ -16,21 +20,59 @@ async function generatePgpKey(caName, name, email, password) {
         Name-Real: ${name}
         Name-Email: ${email}
         Expire-Date: 1y
-        Passphrase: ${password}
+        Passphrase: ${pgpPassword}
         %commit
     `;
     fs.writeFileSync(paramFile, params);
 
+    const encryptedPassword = encrypt(pgpPassword, caPassword);
     const env = { GNUPGHOME: gpgHome };
-    
-    // Wir starten den Job und geben das Job-Objekt sofort zurück. KEIN await!
-    const job = runJob(`gpg --batch --pinentry-mode loopback --full-generate-key "${paramFile}"`, env, gpgHome);
-    
-    // Die temporäre Datei wird jetzt im Job-Handler gelöscht, wenn er fertig ist.
-    // Aber für diese simple Version lassen wir sie erstmal.
 
+    // --- NEUE LOGIK: Die onComplete-Funktion definieren ---
+    const onJobComplete = (completedJob) => {
+        // Aufräumen: Die Parameterdatei wird nicht mehr benötigt
+        if (fs.existsSync(paramFile)) {
+            fs.unlinkSync(paramFile);
+        }
+
+        // Nur fortfahren, wenn der Job erfolgreich war
+        if (completedJob.status !== 'completed') {
+            console.error(`GPG key generation job ${completedJob.id} failed, not saving secret.`);
+            return;
+        }
+
+        // Jetzt, da der Job fertig ist, können wir den Fingerabdruck des NEUEN Schlüssels finden.
+        // GPG gibt bei --full-generate-key oft den neuen Fingerabdruck in stderr/stdout aus.
+        const output = completedJob.output;
+        const fingerprintMatch = output.match(/gpg: key ([A-F0-9]{40}) marked as ultimately trusted/);
+        
+        if (fingerprintMatch && fingerprintMatch[1]) {
+            const fingerprint = fingerprintMatch[1];
+            console.log(`Successfully extracted fingerprint ${fingerprint} for new PGP key.`);
+            const secretFile = path.join(gpgHome, `${fingerprint}.secret`);
+            fs.writeFileSync(secretFile, encryptedPassword);
+        } else {
+            // Fallback: Wenn wir den Fingerprint nicht parsen können.
+            // Dies ist ein Risiko, aber besser als nichts.
+            console.warn(`Could not parse fingerprint from GPG output for job ${completedJob.id}. Saving secret with email as name.`);
+            const secretFile = path.join(gpgHome, `${email}.secret`);
+            fs.writeFileSync(secretFile, encryptedPassword);
+        }
+    };
+
+    // --- ÄNDERUNG: Wir übergeben die onComplete-Funktion an runJob ---
+    const job = runJob(
+        `gpg --batch --pinentry-mode loopback --full-generate-key "${paramFile}"`, 
+        env, 
+        gpgHome,
+        onJobComplete // Hier wird der Callback übergeben
+    );
+    
+    // Die .secret-Datei wird hier NICHT mehr geschrieben.
     return job;
 }
+
+// ... (Rest der Datei, insbesondere listPgpKeys, anpassen, damit es mit fingerprint.secret umgehen kann)
 
 async function listPgpKeys(caName) {
     const gpgHome = path.join(caBaseDir, caName, 'gpg');
@@ -91,4 +133,23 @@ async function getPgpPublicKey(caName, fingerprint) {
     return await runCommand(command, env, gpgHome);
 }
 
-module.exports = { generatePgpKey, listPgpKeys, getPgpPublicKey };
+/**
+ * Exportiert einen privaten PGP-Schlüssel.
+ * Benötigt das Passwort des Schlüssels selbst, um ihn zu entsperren.
+ * @param {string} caName - Der Name der CA.
+ * @param {string} fingerprint - Der Fingerabdruck des zu exportierenden Schlüssels.
+ * @param {string} pgpPassword - Das Passwort des PGP-Schlüssels.
+ * @returns {Promise<string>} Der private Schlüssel im ASCII-Armor-Format.
+ */
+async function exportPgpPrivateKey(caName, fingerprint, pgpPassword) {
+    const gpgHome = path.join(caBaseDir, caName, 'gpg');
+    const env = { GNUPGHOME: gpgHome };
+    
+    // Der Befehl nutzt --pinentry-mode loopback und --passphrase, um GPG nicht-interaktiv
+    // das Passwort für den zu exportierenden Schlüssel zu übergeben.
+    const command = `gpg --pinentry-mode loopback --passphrase "${pgpPassword}" --armor --export-secret-keys ${fingerprint}`;
+
+    return await runCommand(command, env, gpgHome);
+}
+
+module.exports = { generatePgpKey, listPgpKeys, getPgpPublicKey, exportPgpPrivateKey };

@@ -1,16 +1,46 @@
-//- FILE: views/ca_dashboard.pug
-
 extends layout
 
 block content
-  //- Setzt die Variable 'title', die von partials/header.pug verwendet wird
-  - let pageTitle = `Dashboard: ${caName}`
-  
-  //- Anzeigen von Erfolgs- oder Fehlermeldungen
+  - let pageTitle = `X.509 Management: ${caName}`
+
   if message && message.length > 0
     .message.success= message
   if error && error.length > 0
     .message.error= error
+
+  .form-card
+    h3 Neues X.509-Zertifikat ausstellen
+    form(action=`/ca/${caName}/issue-cert`, method="POST")
+      .form-group
+        label Zertifikatstyp wählen:
+        .radio-group(style="display: flex; gap: 1.5rem; margin-bottom: 1rem;")
+          label
+            input(type="radio", name="certType", value="client", checked, onchange="handleCertTypeChange()")
+            |  Client
+          label
+            input(type="radio", name="certType", value="server", onchange="handleCertTypeChange()")
+            |  Server
+        .help-text
+          strong Client: 
+          | Ideal zur Authentifizierung von Benutzern oder Geräten (mTLS). Common Name ist meist eine E-Mail-Adresse.
+          br
+          strong Server: 
+          | Sichert eine Domain für HTTPS. Common Name muss die Haupt-Domain sein. SANs (alternative Domains) können hinzugefügt werden.
+
+      .form-group
+        label#commonNameLabel(for="commonName") Common Name (E-Mail oder eindeutiger Name):
+        input#commonName(type="text", name="commonName", required, placeholder="user@example.com")
+
+      #server-specific-fields(style="display:none;")
+        .form-group
+          label(for="altNames") Alternative Domains (SANs, Komma-getrennt):
+          textarea#altNames(name="altNames", placeholder="z.B. www.domain.com, api.domain.com")
+
+      .form-group
+        label(for="issueCaPassword") CA Passwort:
+        input#issueCaPassword(type="password", name="caPassword", required)
+      
+      button(type="submit") Zertifikat ausstellen
 
   //- Karte 2: Verwaltete X.509-Zertifikate
   .form-card
@@ -47,7 +77,7 @@ block content
                 small= cert.serial
               td.actions-cell
                 if cert.status === 'V'
-                  //- Download
+                  //- DOWNLOAD
                   if cert.type === 'Client'
                     a.btn.btn-secondary(href=`/ca/${caName}/download/x509/${cert.serial}/p12`) Download .p12
                   else if cert.type === 'Server'
@@ -72,37 +102,7 @@ block content
                     button.btn.btn-danger(type="submit", onclick="return confirm('Sind Sie sicher?');") Widerrufen
                 else
                   span -
-
-  //- Karte 4: Verwaltete PGP-Schlüssel
-  .form-card
-    h3 Verwaltete PGP Schlüssel
-    table
-      thead
-        tr
-          th Name / E-Mail
-          th Fingerprint
-          th Erstellt
-          th Aktionen
-      tbody
-        if pgpKeys.length === 0
-          tr
-            td(colspan="4", style="text-align: center;") Noch keine PGP-Schlüssel erstellt.
-        else
-          each key in pgpKeys
-            tr
-              td= key.uids.join(', ')
-              td
-                small= key.fingerprint
-              td= key.created
-              td.actions-cell
-                a.btn.btn-secondary(href=`/ca/${caName}/pgp/${key.fingerprint}/pub`, target="_blank") Public Key
-                form(action=`/ca/${caName}/pgp/${key.fingerprint}/show-password`, method="POST")
-                  input(type="password", name="caPassword", placeholder="CA Passwort", required, style="width:120px; font-size:0.8rem;")
-                  button.btn.btn-secondary(type="submit") Passwort anzeigen
-                form(action=`/ca/${caName}/pgp/${key.fingerprint}/download-private`, method="POST")
-                  input(type="password", name="caPassword", placeholder="CA Passwort", required, style="width:120px; font-size:0.8rem;")
-                  button.btn.btn-danger(type="submit") Download Private
-
+  
     //- Modal-Fenster für Snippets
     #snippetModal.modal
       .modal-content

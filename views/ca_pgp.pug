@@ -1,0 +1,65 @@
+//- FILE: views/ca_pgp.pug
+
+extends layout
+
+block content
+  - let pageTitle = `PGP Management: ${caName}`
+
+  if message && message.length > 0
+    .message.success= message
+  if error && error.length > 0
+    .message.error= error
+
+  //- Karte 3: PGP-Schlüssel erstellen
+  .form-card
+    h3 PGP Schlüsselpaar erstellen
+    form(action=`/ca/${caName}/generate-pgp`, method="POST")
+      .form-grid
+        .form-group
+          label(for="pgpName") Name (z.B. Vorname Nachname):
+          input#pgpName(type="text", name="name", required)
+        .form-group
+          label(for="pgpEmail") E-Mail:
+          input#pgpEmail(type="email", name="email", required)
+        .form-group
+          label(for="pgpPassword") Passphrase des neuen Schlüssels:
+          input#pgpPassword(type="password", name="password", required)
+        .form-group
+          label(for="pgpCaPassword") CA Passwort (zum Sichern der Passphrase):
+          input#pgpCaPassword(type="password", name="caPassword", required)
+      button(type="submit") PGP-Schlüssel erstellen
+
+  //- Karte 4: Verwaltete PGP-Schlüssel
+  .form-card
+    h3 Verwaltete PGP Schlüssel
+    table
+      thead
+        tr
+          th Name / E-Mail
+          th Fingerprint
+          th Erstellt
+          th Aktionen
+      tbody
+        if pgpKeys.length === 0
+          tr
+            td(colspan="4", style="text-align: center;") Noch keine PGP-Schlüssel erstellt.
+        else
+          each key in pgpKeys
+            tr
+              td= key.uids.join(', ')
+              td
+                small= key.fingerprint
+              td= key.created
+              td.actions-cell
+                //- Öffentlichen Schlüssel anzeigen
+                a.btn.btn-secondary(href=`/ca/${caName}/pgp/${key.fingerprint}/pub`, target="_blank") Public Key
+                
+                //- Passwort anzeigen
+                form(action=`/ca/${caName}/pgp/${key.fingerprint}/show-password`, method="POST")
+                  input(type="password", name="caPassword", placeholder="CA Passwort", required, style="width:120px; font-size:0.8rem;")
+                  button.btn.btn-secondary(type="submit") Passwort
+                
+                //- Privaten Schlüssel herunterladen
+                form(action=`/ca/${caName}/pgp/${key.fingerprint}/download-private`, method="POST")
+                  input(type="password", name="caPassword", placeholder="CA Passwort", required, style="width:120px; font-size:0.8rem;")
+                  button.btn.btn-danger(type="submit") Download Private

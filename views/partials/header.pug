@@ -1,0 +1,8 @@
+//- FILE: views/partials/header.pug
+
+.header
+  h1.header-title= title || "Dashboard"
+  .theme-controls
+    label(for="accent-color-picker") Akzent
+    input#accent-color-picker(type="color")
+    button#theme-toggle.btn.btn-secondary Dark/Light

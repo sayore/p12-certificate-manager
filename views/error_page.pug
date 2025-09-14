@@ -1,0 +1,22 @@
+//- FILE: views/error_page.pug
+
+extends layout
+
+block vars
+  - let pageTitle = "Fehler"
+  //- Optional: Hier activePage setzen, damit das Menü korrekt bleibt
+  if caName
+    - let activePage = 'pgp' // Oder je nach Kontext anpassen
+
+block content
+  .form-card
+    h3 Ein Fehler ist aufgetreten
+    if errorMessage
+      .message.error= errorMessage
+    else
+      .message.error Unbekannter Fehler.
+
+    if caName
+      a.btn(href=`/ca/${caName}`) Zurück zum Dashboard
+    else
+      a.btn(href="/") Zurück zur Startseite

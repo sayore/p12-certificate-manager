@@ -1,0 +1,274 @@
+/* FILE: public/css/main.css */
+
+/* 1. CSS Variablen für das Theming */
+:root {
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  
+  /* Light Mode (Default) */
+  --bg-page: #f0f2f5;
+  --bg-sidebar: #ffffff;
+  --bg-content: #ffffff;
+  --bg-card: #fafafa;
+  --bg-input: #ffffff;
+
+  --text-primary: #1a202c;
+  --text-secondary: #4a5568;
+  --text-placeholder: #a0aec0;
+  
+  --border-color: #e2e8f0;
+  --shadow-color: rgba(0, 0, 0, 0.05);
+
+  /* Akzentfarbe - wird per JS gesetzt */
+  --accent-color: #3498db;
+  --accent-color-hover: #2980b9;
+}
+
+body.dark-mode {
+  /* Dark Mode (Dimmed Blue) */
+  --bg-page: #0d1117;
+  --bg-sidebar: #161b22;
+  --bg-content: #161b22;
+  --bg-card: #21262d;
+  --bg-input: #0d1117;
+
+  --text-primary: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-placeholder: #484f58;
+
+  --border-color: #30363d;
+  --shadow-color: rgba(0, 0, 0, 0.2);
+}
+
+/* 2. Grundlegende Styles & Reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.6;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* 3. Layout mit Flexbox */
+.page-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  background-color: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  padding: 2rem 1rem;
+  flex-shrink: 0;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.main-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--bg-content);
+  flex-shrink: 0;
+}
+
+.content-wrapper {
+  padding: 2rem;
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+/* 4. Komponenten-Styling */
+
+/* Sidebar */
+.logo {
+  font-weight: 700;
+  font-size: 1.25rem;
+  margin-bottom: 2rem;
+  color: var(--accent-color);
+}
+
+.nav-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.nav-link {
+  display: block;
+  padding: 0.75rem 1rem;
+  text-decoration: none;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+.nav-link:hover {
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+}
+.nav-link.active {
+  background-color: var(--accent-color);
+  color: white;
+}
+
+/* Header */
+.header-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+}
+.theme-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.theme-controls label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+#theme-toggle {
+  cursor: pointer;
+}
+#accent-color-picker {
+  border: none;
+  background: none;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  padding: 0;
+}
+
+
+/* Formulare */
+.form-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 2rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+}
+.form-card h3 {
+  margin-top: 0;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.75rem;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+.form-group label {
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+input[type="text"], input[type="password"], input[type="email"], textarea, select {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+input::placeholder {
+  color: var(--text-placeholder);
+}
+.help-text {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background-color: var(--bg-page);
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+}
+
+/* Tabellen */
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  font-size: 0.9rem;
+  vertical-align: middle;
+}
+th {
+  font-weight: 700;
+  color: var(--text-secondary);
+  background-color: var(--bg-card);
+}
+td small {
+  display: block;
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+.actions-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+/* Buttons */
+button, .btn {
+  background-color: var(--accent-color);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+button:hover, .btn:hover {
+  background-color: var(--accent-color-hover);
+}
+
+.btn-secondary {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+.btn-secondary:hover {
+    background-color: var(--bg-page);
+}
+
+.btn-danger {
+    background-color: #e53e3e;
+}
+.btn-danger:hover {
+    background-color: #c53030;
+}
+
+/* Status-Badges */
+.status-badge {
+    padding: 0.25rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    display: inline-block;
+}
+.status-V { background-color: #2f855a; color: white; }
+.status-R { background-color: #c53030; color: white; }

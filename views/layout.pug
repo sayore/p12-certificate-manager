@@ -1,0 +1,83 @@
+//- FILE: views/layout.pug
+block vars
+
+doctype html
+html(lang="de")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1.0")
+    title CA Master Control
+    //- Google Fonts für ein sauberes, modernes Schriftbild
+    link(rel="preconnect", href="https://fonts.googleapis.com")
+    link(rel="preconnect", href="https://fonts.gstatic.com", crossorigin)
+    link(href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap", rel="stylesheet")
+    //- Hier kommt unser komplettes neues CSS
+    style
+      include ../public/css/main.css
+  body
+    .page-container
+      //- Seitenmenü wird aus einer Partial-Datei geladen
+      include partials/sidebar.pug
+
+      .main-content
+        //- Header-Balken wird aus einer Partial-Datei geladen
+        include partials/header.pug
+
+        main.content-wrapper
+          //- Der eigentliche Inhalt der jeweiligen Seite wird hier eingefügt
+          block content
+    
+    //- JavaScript für Theming und andere Interaktionen
+    script.
+      // Theming Logik
+      const themeToggle = document.getElementById('theme-toggle');
+      const accentColorPicker = document.getElementById('accent-color-picker');
+      const currentTheme = localStorage.getItem('theme');
+      const currentAccent = localStorage.getItem('accentColor') || '#3498db';
+
+      // Beim Laden der Seite das gespeicherte Theme anwenden
+      if (currentTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+      }
+      document.documentElement.style.setProperty('--accent-color', currentAccent);
+      accentColorPicker.value = currentAccent;
+
+      // Event Listener für den Theme-Wechsel
+      themeToggle.addEventListener('click', () => {
+        document.body.classList.toggle('dark-mode');
+        let theme = 'light';
+        if (document.body.classList.contains('dark-mode')) {
+          theme = 'dark';
+        }
+        localStorage.setItem('theme', theme);
+      });
+
+      // Event Listener für die Akzentfarbe
+      accentColorPicker.addEventListener('input', (e) => {
+        const newColor = e.target.value;
+        document.documentElement.style.setProperty('--accent-color', newColor);
+        localStorage.setItem('accentColor', newColor);
+      });
+
+      // JavaScript für das Umschalten der Zertifikatsformulare
+      function handleCertTypeChange() {
+        const type = document.querySelector('input[name="certType"]:checked').value;
+        const serverFields = document.getElementById('server-specific-fields');
+        const commonNameLabel = document.getElementById('commonNameLabel');
+        const commonNameInput = document.getElementById('commonName');
+        
+        if (type === 'server') {
+          serverFields.style.display = 'block';
+          commonNameLabel.textContent = 'Common Name (Haupt-Domain, z.B. server.example.com):';
+          commonNameInput.placeholder = 'server.example.com';
+        } else {
+          serverFields.style.display = 'none';
+          commonNameLabel.textContent = 'Common Name (E-Mail oder eindeutiger Name):';
+          commonNameInput.placeholder = 'user@example.com';
+        }
+      }
+
+      // Initialen Zustand setzen, falls das Formular existiert
+      if (document.querySelector('input[name="certType"]')) {
+        handleCertTypeChange();
+      }

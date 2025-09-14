@@ -3,6 +3,8 @@ const { URLSearchParams } = require("url");
 const axios = require("axios"); // Benötigt für den nicht-authentifizierten Client
 const fs = require("fs");
 const path = require("path");
+const JSZip = require('jszip');
+
 
 // Importiere den Client und die Konfiguration aus den Utilities
 const { client, config, log, startAdvancedTimer } = require("./test-utils");
@@ -66,14 +68,15 @@ const tests = {
       throw new Error("Server did not become available after 5 seconds.");
   },
 
-  "[Step 2] Login & Access Dashboard": async () => {
-    const response = await client.get("/");
-    if (response.status !== 200)
-      throw new Error(`Expected status 200 but got ${response.status}`);
+  // ----- FILE: tests/e2e.test.js -----
+
+'[Step 2] Login & Access Dashboard': async () => {
+    const response = await client.get('/');
+    if (response.status !== 200) throw new Error(`Expected status 200 but got ${response.status}`);
     const $ = cheerio.load(response.data);
-    if ($("h1").text() !== "CA Master Control")
-      throw new Error("Main dashboard heading not found.");
-  },
+    // Wir prüfen jetzt auf den korrekten Titel, der vom neuen Header-Partial gerendert wird.
+    if ($('h1.header-title').text() !== 'Dashboard') throw new Error('Main dashboard heading not found.');
+},
 
   "[Step 3] Create a new Test CA": async () => {
     const params = new URLSearchParams();
@@ -89,66 +92,144 @@ const tests = {
       throw new Error("Link to new CA not found.");
   },
 
-  "[Step 4] Issue a Client Certificate": async () => {
-    const commonName = `client-${Date.now()}@test.com`;
-    const params = new URLSearchParams();
-    params.append("commonName", commonName);
-    params.append("caPassword", testCaPassword);
-    const postResponse = await client.post(
-      `/ca/${testCaName}/issue-client`,
-      params
-    );
-    if (postResponse.status !== 302) throw new Error(`Expected 302`);
-    const getResponse = await client.get(`/ca/${testCaName}`);
-    const $ = cheerio.load(getResponse.data);
-    const certRow = $(`td:contains("${commonName}")`).closest("tr");
-    if (certRow.length === 0)
-      throw new Error("New client certificate not found");
-    clientCertSerial = certRow.find("td").eq(3).find("small").text().trim();
-    if (!clientCertSerial) throw new Error("Could not extract serial");
-  },
+  '[Step 4] Issue a Client Certificate': async () => {
+        const commonName = `client-${Date.now()}@test.com`;
+        
+        // NEU: Zuerst zur X.509-Seite navigieren, um das Formular zu finden
+        const x509PageResponse = await client.get(`/ca/${testCaName}/x509`);
+        if (x509PageResponse.status !== 200) throw new Error('Could not load X.509 management page.');
+        
+        const params = new URLSearchParams();
+        params.append('certType', 'client'); // Das neue Radio-Button-Feld
+        params.append('commonName', commonName);
+        params.append('caPassword', testCaPassword);
+        
+        // NEU: Die URL zum Absenden hat sich geändert
+        const postResponse = await client.post(`/ca/${testCaName}/issue-cert`, params);
+        if (postResponse.status !== 302) throw new Error(`Expected 302`);
 
-  "[Step 5] Issue a Server Certificate": async () => {
-    const commonName = `server-${Date.now()}.test.com`;
-    const params = new URLSearchParams();
-    params.append("commonName", commonName);
-    params.append("caPassword", testCaPassword);
-    const postResponse = await client.post(
-      `/ca/${testCaName}/issue-server`,
-      params
-    );
-    if (postResponse.status !== 302) throw new Error(`Expected 302`);
-    const getResponse = await client.get(`/ca/${testCaName}`);
-    const $ = cheerio.load(getResponse.data);
-    const certRow = $(`td:contains("${commonName}")`).closest("tr");
-    if (certRow.length === 0)
-      throw new Error("New server certificate not found");
-    serverCertSerial = certRow.find("td").eq(3).find("small").text().trim();
-  },
+        // NEU: Der Redirect führt jetzt zur X.509-Seite
+        const redirectedPage = await client.get(postResponse.headers.location);
+        const $ = cheerio.load(redirectedPage.data);
+        const certRow = $(`td:contains("${commonName}")`).closest('tr');
+        if (certRow.length === 0) throw new Error('New client certificate not found');
+        clientCertSerial = certRow.find('td').eq(3).find('small').text().trim();
+        if (!clientCertSerial) throw new Error('Could not extract serial');
+    },
 
-  "[Step 6] Revoke the Client Certificate": async () => {
-    const params = new URLSearchParams();
-    params.append("serial", clientCertSerial);
-    params.append("caPassword", testCaPassword);
-    const postResponse = await client.post(
-      `/ca/${testCaName}/revoke-x509`,
-      params
-    );
-    if (postResponse.status !== 302) throw new Error(`Expected 302`);
-    const getResponse = await client.get(`/ca/${testCaName}`);
-    const $ = cheerio.load(getResponse.data);
-    const certRow = $("tbody tr").filter(function () {
-      return (
-        $(this).find("td").eq(3).find("small").text().trim() ===
-        clientCertSerial
-      );
-    });
-    if (certRow.length === 0)
-      throw new Error("Row for revoked certificate not found.");
-    if (certRow.find("td:first-child .status-R").length === 0) {
-      throw new Error('Certificate status in UI is not "Widerrufen".');
+    '[Step 4.5] Verify Client Certificate P12 Download': async () => {
+    log('--- Testing Client Certificate P12 Download ---', 'blue');
+    if (!clientCertSerial) {
+        throw new Error('Cannot run test: clientCertSerial not captured.');
     }
-  },
+
+    const response = await client.get(`/ca/${testCaName}/download/x509/${clientCertSerial}/p12`, {
+        responseType: 'arraybuffer'
+    });
+
+    if (response.status !== 200) {
+        throw new Error(`Expected status 200 for download, got ${response.status}`);
+    }
+    // PKCS12 hat einen spezifischen MIME-Typ
+    if (response.headers['content-type'] !== 'application/x-pkcs12') {
+        throw new Error(`Expected content-type application/x-pkcs12, got ${response.headers['content-type']}`);
+    }
+    log('   -> SUCCESS: Received correct headers for .p12 file.', 'info');
+
+    // Wir können den Inhalt nicht einfach parsen, aber wir können prüfen, ob er nicht leer ist
+    const fileBuffer = Buffer.from(response.data);
+    if (fileBuffer.length < 100) {
+        throw new Error('Downloaded .p12 file seems to be empty or too small.');
+    }
+    log('   -> SUCCESS: Downloaded .p12 file has a valid size.', 'info');
+},
+
+  '[Step 5] Issue a Server Certificate': async () => {
+        const commonName = `server-${Date.now()}.test.com`;
+        
+        const params = new URLSearchParams();
+        params.append('certType', 'server'); // Das neue Radio-Button-Feld
+        params.append('commonName', commonName);
+        params.append('altNames', `www.${commonName}`);
+        params.append('caPassword', testCaPassword);
+
+        // NEU: Die URL zum Absenden hat sich geändert
+        const postResponse = await client.post(`/ca/${testCaName}/issue-cert`, params);
+        if (postResponse.status !== 302) throw new Error(`Expected 302`);
+        
+        // NEU: Wir landen wieder auf der X.509-Seite und suchen dort
+        const getResponse = await client.get(`/ca/${testCaName}/x509`);
+        const $ = cheerio.load(getResponse.data);
+        const certRow = $(`td:contains("${commonName}")`).closest('tr');
+        if (certRow.length === 0) throw new Error('New server certificate not found');
+        serverCertSerial = certRow.find('td').eq(3).find('small').text().trim();
+    },
+    '[Step 5.5] Verify Server Certificate ZIP Download': async () => {
+    log('--- Testing Server Certificate ZIP Download ---', 'blue');
+    if (!serverCertSerial) throw new Error('Cannot run test: serverCertSerial not captured.');
+    
+    const getPage = await client.get(`/ca/${testCaName}/x509`);
+    const $ = cheerio.load(getPage.data);
+    const certRow = $(`td:contains("${serverCertSerial}")`).closest('tr');
+    const commonName = certRow.find('td').eq(2).text().trim();
+    if(!commonName) throw new Error('Could not find common name in UI for test setup.');
+
+    const response = await client.get(`/ca/${testCaName}/download/x509/${serverCertSerial}/zip`, {
+        responseType: 'arraybuffer' 
+    });
+
+    if (response.status !== 200) throw new Error(`Expected status 200, got ${response.status}`);
+    if (response.headers['content-type'] !== 'application/zip') throw new Error(`Expected content-type application/zip`);
+    log('   -> SUCCESS: Received correct headers for ZIP file.', 'info');
+
+    const zip = await JSZip.loadAsync(response.data);
+    
+    const sanitizedCommonName = commonName.replace(/[^a-zA-Z0-9\.\-\_]/g, '_');
+    const expectedCertFile = `${sanitizedCommonName}_${serverCertSerial}.crt`;
+    const expectedKeyFile = `${sanitizedCommonName}_${serverCertSerial}.key`;
+    const expectedCaFile = `ca.crt`;
+    
+    // --- KORREKTUR: Variablen VOR der Prüfung deklarieren ---
+    const certFile = zip.file(expectedCertFile);
+    const keyFile = zip.file(expectedKeyFile);
+    const caFile = zip.file(expectedCaFile);
+    // ----------------------------------------------------
+
+    if (!certFile || !keyFile || !caFile) {
+        const files = Object.keys(zip.files);
+        throw new Error(`ZIP archive is missing one or more required files. Expected '${expectedCertFile}', '${expectedKeyFile}', '${expectedCaFile}'. Found: ${files.join(', ')}`);
+    }
+    log('   -> SUCCESS: All expected files with correct names found in the ZIP archive.', 'info');
+
+    // Jetzt sind die Variablen hier garantiert verfügbar
+    const certContent = await certFile.async('string');
+    const keyContent = await keyFile.async('string');
+
+    if (!certContent.includes('-----BEGIN CERTIFICATE-----')) throw new Error('Certificate file content is invalid.');
+    if (!keyContent.includes('-----BEGIN PRIVATE KEY-----')) throw new Error('Private key file content is invalid.');
+    log('   -> SUCCESS: File contents appear to be valid.', 'info');
+},
+
+  '[Step 6] Revoke the Client Certificate': async () => {
+        const params = new URLSearchParams();
+        params.append('serial', clientCertSerial);
+        params.append('caPassword', testCaPassword);
+        
+        // Die Revoke-URL bleibt gleich, aber der Redirect geht zur X.509-Seite
+        const postResponse = await client.post(`/ca/${testCaName}/revoke-x509`, params);
+        if (postResponse.status !== 302) throw new Error(`Expected 302`);
+        
+        // NEU: Lade die X.509-Seite, um das Ergebnis zu verifizieren
+        const getResponse = await client.get(`/ca/${testCaName}/x509`);
+        const $ = cheerio.load(getResponse.data);
+        const certRow = $('tbody tr').filter(function() {
+            return $(this).find('td').eq(3).find('small').text().trim() === clientCertSerial;
+        });
+        if (certRow.length === 0) throw new Error('Row for revoked certificate not found.');
+        if (certRow.find('.status-R').length === 0) { // Klasse hat sich zu status-badge geändert
+            throw new Error('Certificate status in UI is not "Widerrufen".');
+        }
+    },
 
   "[Step 7] Verify CRL Content": async () => {
     log("--- Testing public CRL endpoint ---", "blue");
@@ -194,70 +275,48 @@ const tests = {
     }
     // --- ENDE DER KORREKTUR ---
   },
-  "[Step 8] Generate a PGP Key (Async Job)": async () => {
-    log("--- Testing PGP Key Generation (Async Job) ---", "blue");
-    const name = `PGP Test User ${Date.now()}`;
-    const email = `pgp-test-${Date.now()}@example.com`;
+  '[Step 8] Generate a PGP Key (Async Job)': async () => {
+        log('--- Testing PGP Key Generation (Async Job) ---', 'blue');
+        const name = `PGP Test User ${Date.now()}`;
+        const email = `pgp-test-${Date.now()}@example.com`;
+        
+        // NEU: Wir navigieren zuerst zur PGP-Seite, um das Formular zu finden
+        await client.get(`/ca/${testCaName}/pgp`);
 
-    const params = new URLSearchParams();
-    params.append("name", name);
-    params.append("email", email);
-    params.append("password", "pgp-test-password");
+        const params = new URLSearchParams();
+        params.append('name', name);
+        params.append('email', email);
+        params.append('password', 'pgp-test-password');
+        params.append('caPassword', testCaPassword);
 
-    // 1. Starte den Job
-    const startResponse = await client.post(
-      `/api/ca/${testCaName}/generate-pgp`,
-      params
-    );
-    if (startResponse.status !== 202)
-      throw new Error(
-        `Expected status 202 (Accepted) but got ${startResponse.status}`
-      );
-    const { jobId, statusUrl } = startResponse.data;
-    if (!jobId) throw new Error("Server did not return a jobId.");
-    log(
-      `   -> INFO: Job [${jobId}] started successfully. Polling status...`,
-      "info"
-    );
+        // Die URL für die API bleibt gleich
+        const startResponse = await client.post(`/api/ca/${testCaName}/generate-pgp`, params);
+        if (startResponse.status !== 202) throw new Error(`Expected 202, got ${startResponse.status}`);
+        const { jobId, statusUrl } = startResponse.data;
+        if (!jobId) throw new Error('Server did not return a jobId.');
+        log(`   -> INFO: Job [${jobId}] started successfully. Polling status...`, 'info');
 
-    // 2. Frage den Status ab, bis der Job fertig ist
-    let jobStatus = "";
-    for (let i = 0; i < 20; i++) {
-      // Max. 20 Sekunden warten
-      const statusResponse = await client.get(statusUrl);
-      jobStatus = statusResponse.data.status;
-      if (jobStatus === "completed" || jobStatus === "failed") {
-        log(`   -> INFO: Job finished with status: ${jobStatus}`, "info");
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
+        // Polling-Logik bleibt unverändert
+        let jobStatus = '';
+        for (let i = 0; i < 30; i++) { // Timeout etwas erhöht für 4096-bit Keys
+            const statusResponse = await client.get(statusUrl);
+            jobStatus = statusResponse.data.status;
+            if (jobStatus === 'completed' || jobStatus === 'failed') break;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (jobStatus !== 'completed') throw new Error(`PGP job did not complete. Final status: ${jobStatus}`);
+        log(`   -> INFO: Job finished with status: ${jobStatus}`, 'info');
 
-    if (jobStatus !== "completed") {
-      const statusResponse = await client.get(statusUrl);
-      throw new Error(
-        `PGP key generation job did not complete successfully. Final status: ${jobStatus}. Error: ${statusResponse.data.error}`
-      );
-    }
+        // NEU: Lade die PGP-Seite, um das Ergebnis zu verifizieren
+        const getResponse = await client.get(`/ca/${testCaName}/pgp`);
+        const $ = cheerio.load(getResponse.data);
+        const keyRow = $(`td:contains("${email}")`).closest('tr');
+        if (keyRow.length === 0) throw new Error('New PGP key was not found in the table.');
 
-    // 3. Lade das Dashboard und prüfe das Ergebnis
-    const getResponse = await client.get(`/ca/${testCaName}`);
-    const $ = cheerio.load(getResponse.data);
-    const keyRow = $(`td:contains("${email}")`).closest("tr");
-    if (keyRow.length === 0) {
-      throw new Error(
-        "New PGP key was not found in the table after job completion."
-      );
-    }
-
-    pgpKeyFingerprint = keyRow.find("td").eq(1).find("small").text().trim();
-    if (!pgpKeyFingerprint)
-      throw new Error("Could not extract PGP key fingerprint.");
-    log(
-      `   -> SUCCESS: PGP key for "${email}" created and found on dashboard.`,
-      "info"
-    );
-  },
+        pgpKeyFingerprint = keyRow.find('td').eq(1).find('small').text().trim();
+        if (!pgpKeyFingerprint) throw new Error('Could not extract PGP key fingerprint.');
+        log(`   -> SUCCESS: PGP key for "${email}" created and found on PGP page.`, 'info');
+    },
 
   "[Step 9] Verify PGP Public Key Endpoint": async () => {
     log("--- Testing PGP Public Key Endpoint ---", "blue");
@@ -306,80 +365,41 @@ const tests = {
       "info"
     );
   },
-  "[Step 10] Fail to revoke cert with wrong CA password": async () => {
-    log("--- Testing failed revocation with incorrect password ---", "blue");
-    if (!serverCertSerial)
-      throw new Error("Cannot run test: serverCertSerial not set.");
+  '[Step 10] Fail to revoke cert with wrong CA password': async () => {
+        log('--- Testing failed revocation with incorrect password ---', 'blue');
+        if (!serverCertSerial) throw new Error('Cannot run test: serverCertSerial not set.');
 
-    const params = new URLSearchParams();
-    params.append("serial", serverCertSerial);
-    params.append("caPassword", "this-is-the-wrong-password");
+        const params = new URLSearchParams();
+        params.append('serial', serverCertSerial);
+        params.append('caPassword', 'this-is-the-wrong-password');
 
-    // 1. Führe den POST-Request aus, der fehlschlagen soll
-    const postResponse = await client.post(
-      `/ca/${testCaName}/revoke-x509`,
-      params
-    );
+        const postResponse = await client.post(`/ca/${testCaName}/revoke-x509`, params);
+        if (postResponse.status !== 302) throw new Error('Expected 302 Redirect even on failure.');
+        log('   -> SUCCESS: Server correctly responded with a 302 redirect.', 'info');
+        
+        const sessionCookie = postResponse.headers['set-cookie'] ? postResponse.headers['set-cookie'][0] : null;
+        if (!sessionCookie) throw new Error('Server did not send a session cookie.');
 
-    if (postResponse.status !== 302) {
-      throw new Error(
-        `Expected status 302 (Redirect) but got ${postResponse.status}`
-      );
-    }
-    log(
-      "   -> SUCCESS: Server correctly responded with a 302 redirect.",
-      "info"
-    );
+        // NEU: Der Redirect geht zur X.509-Seite
+        const getResponse = await client.get(postResponse.headers.location, {
+            headers: { 'Cookie': sessionCookie }
+        });
+        const $ = cheerio.load(getResponse.data);
+        const errorMsg = $('.message.error').text();
+        if (!errorMsg || !errorMsg.toLowerCase().includes('fehler')) {
+            throw new Error('Expected an error message for wrong password, but none was found.');
+        }
+        log('   -> SUCCESS: Server correctly showed an error for invalid CA password.', 'info');
 
-    // 2. Extrahiere den Session-Cookie manuell aus der Antwort
-    const sessionCookie = postResponse.headers["set-cookie"]
-      ? postResponse.headers["set-cookie"][0]
-      : null;
-    if (!sessionCookie) {
-      throw new Error(
-        "Server did not send a session cookie (Set-Cookie header) after the POST request."
-      );
-    }
-    log(`   -> INFO: Captured session cookie.`, "info");
-
-    // 3. Führe den GET-Request aus und füge den Cookie manuell hinzu
-    const getResponse = await client.get(postResponse.headers.location, {
-      headers: {
-        Cookie: sessionCookie,
-      },
-    });
-    const $ = cheerio.load(getResponse.data);
-
-    // 4. Prüfe jetzt auf die Fehlermeldung
-    const errorMsg = $(".message.error").text();
-    if (!errorMsg || !errorMsg.toLowerCase().includes("fehler")) {
-      throw new Error(
-        "Expected an error message for wrong password, but none was found."
-      );
-    }
-    log(
-      "   -> SUCCESS: Server correctly showed an error for invalid CA password.",
-      "info"
-    );
-
-    // 5. Zusätzliche Prüfung: Sicherstellen, dass der Status des Zertifikats immer noch "Gültig" ist
-    const certRow = $("tbody tr").filter(function () {
-      return (
-        $(this).find("td").eq(3).find("small").text().trim() ===
-        serverCertSerial
-      );
-    });
-    const statusSpan = certRow.find("td:first-child .status-V");
-    if (statusSpan.length === 0) {
-      throw new Error(
-        "Certificate status was incorrectly changed despite wrong password."
-      );
-    }
-    log(
-      '   -> SUCCESS: Certificate status correctly remains "Gültig".',
-      "info"
-    );
-  },
+        const certRow = $('tbody tr').filter(function() {
+            return $(this).find('td').eq(3).find('small').text().trim() === serverCertSerial;
+        });
+        const statusSpan = certRow.find('.status-V');
+        if (statusSpan.length === 0) {
+            throw new Error('Certificate status was incorrectly changed despite wrong password.');
+        }
+        log('   -> SUCCESS: Certificate status correctly remains "Gültig".', 'info');
+    },
 
   "[Step 11] Fail to create a CA with an existing name": async () => {
     log("--- Testing failed CA creation with duplicate name ---", "blue");

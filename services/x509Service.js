@@ -42,7 +42,10 @@ async function issueClientCert(caName, caPassword, commonName) {
     }
     const caDir = path.join(caBaseDir, caName);
     const env = { CA_PASS: caPassword };
-    const userKey = `${commonName}.key`, userCsr = `${commonName}.csr`, userCrt = `${commonName}.crt`, userP12 = `${commonName}.p12`;
+    const userKey = path.join(caDir, `${commonName}.key`);
+    const userCsr = path.join(caDir, `${commonName}.csr`);
+    const userCrt = path.join(caDir, `${commonName}.crt`);
+    const userP12 = path.join(caDir, `${commonName}.p12`);
 
     const issuedDir = path.join(caDir, 'issued', commonName);
     if (!fs.existsSync(issuedDir)) {
@@ -50,83 +53,101 @@ async function issueClientCert(caName, caPassword, commonName) {
     }
 
     try {
-        await runCommand(`openssl genrsa -out "${userKey}" 2048`, {}, caDir);
+        // Schritt 1: Schlüssel und CSR im Hauptverzeichnis der CA erstellen
+        await runCommand(`openssl genrsa -out "${userKey}" 2048`);
         await runCommand(`openssl req -config "openssl.cnf" -new -key "${userKey}" -out "${userCsr}" -subj "/CN=${commonName}"`, {}, caDir);
+        
+        // Schritt 2: Zertifikat signieren. Dies aktualisiert index.txt und erstellt .crt
         await runCommand(`openssl ca -config "openssl.cnf" -extensions usr_cert -days 365 -notext -md sha256 -in "${userCsr}" -out "${userCrt}" -passin env:CA_PASS -batch`, env, caDir);
-        // WICHTIG: Das Passwort für das .p12 wird jetzt auf einen bekannten Wert gesetzt (oder leer gelassen)
-        // Hier verwenden wir 'export' als Beispiel-Passwort. Sie können auch `pass:` für kein Passwort verwenden.
-        await runCommand(`openssl pkcs12 -export -out "${userP12}" -inkey "${userKey}" -in "${userCrt}" -certfile "ca.crt" -passout pass:export`, {}, caDir);
+
+        // Schritt 3: .p12-Paket erstellen
+        await runCommand(`openssl pkcs12 -export -out "${userP12}" -inkey "${userKey}" -in "${userCrt}" -certfile "ca.crt" -passout pass:`, {}, caDir);
         
-        // NEU: Verschiebe die wichtige .p12-Datei an ihren finalen Ort
-        fs.renameSync(path.join(caDir, userP12), path.join(issuedDir, userP12));
-        
-        const crtData = fs.readFileSync(path.join(caDir, userCrt), 'utf-8');
-        const certDetails = await runCommand(`openssl x509 -in "${path.join(caDir, userCrt)}" -noout -serial -subject`);
+        // Schritt 4: Finale Dateien an ihren permanenten Speicherort verschieben
+        fs.renameSync(userP12, path.join(issuedDir, `${commonName}.p12`));
+        fs.renameSync(userCrt, path.join(issuedDir, `${commonName}.crt`));
+        fs.renameSync(userKey, path.join(issuedDir, `${commonName}.key`));
+
+        // Schritt 5: Daten für die Antwort sammeln
+        const crtData = fs.readFileSync(path.join(issuedDir, `${commonName}.crt`), 'utf-8');
+        const certDetails = await runCommand(`openssl x509 -in "${path.join(issuedDir, `${commonName}.crt`)}" -noout -serial -subject`);
         const serial = certDetails.match(/serial=(.*)/)[1];
-        // p12Data wird nicht mehr zurückgegeben, da es jetzt auf der Festplatte liegt
+        
+        // Schritt 6: Temporäre Dateien explizit am Ende des Erfolgsfalls aufräumen
+        if (fs.existsSync(userCsr)) {
+            fs.unlinkSync(userCsr);
+        }
+        
         return { message: 'Client certificate issued.', serial, commonName, certificate: crtData };
-    } finally {
-        // ÄNDERUNG: Wir löschen nur noch die temporären Dateien, nicht mehr die .p12-Datei
-        [userKey, userCsr, userCrt].forEach(f => {
-            const fullPath = path.join(caDir, f);
-            if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+
+    } catch (error) {
+        // Wenn irgendwo ein Fehler auftritt, versuche alles aufzuräumen
+        [userKey, userCsr, userCrt, userP12].forEach(f => {
+            if (fs.existsSync(f)) fs.unlinkSync(f);
         });
+        // Und den Fehler weiterreichen, damit der Benutzer eine Nachricht sieht
+        throw error;
     }
 }
 
 /**
  * Stellt ein Server-Zertifikat (.pem/.key) aus und verwendet die copy_extensions Methode.
  */
+// ----- FILE: services/x509Service.js -----
+
 async function issueServerCert(caName, caPassword, commonName, altNames) {
     if (!commonName || !/^[a-zA-Z0-9\-\.]+$/.test(commonName)) throw new Error('Invalid Common Name.');
     
     const caDir = path.join(caBaseDir, caName);
     const env = { CA_PASS: caPassword };
-    const serverKey = `${commonName}.key`, serverCsr = `${commonName}.csr`, serverCrt = `${commonName}.crt`;
-    
-    // NEU: Pfade für Konfigurationsdateien definieren
-    const mainCnfPath = path.join(caDir, 'openssl.cnf');
+
+    // Temporäre Dateipfade
+    const tempKeyPath = path.join(caDir, `${commonName}.key`);
+    const tempCsrPath = path.join(caDir, `${commonName}.csr`);
+    const tempCrtPath = path.join(caDir, `${commonName}.crt`);
     const tempCnfPath = path.join(caDir, 'temp_server_req.cnf');
 
+    // Finale Speicherorte
     const issuedDir = path.join(caDir, 'issued', commonName);
-    if (!fs.existsSync(issuedDir)) {
-        fs.mkdirSync(issuedDir, { recursive: true });
-    }
-
-    // 1. Erstelle die dynamische SAN-Sektion
-    let sanSection = `\n[v3_req_san]\nsubjectAltName = @alt_names\n\n[alt_names]\nDNS.1 = ${commonName}\n`;
-    if (altNames) {
-        altNames.split(',').map(s => s.trim()).filter(Boolean).forEach((name, index) => { sanSection += `DNS.${index + 2} = ${name}\n`; });
-    }
-    
-    // 2. Lese die Haupt-Konfiguration und füge die SAN-Sektion hinzu, um eine vollständige temporäre Konfig zu erstellen
-    const mainCnfContent = fs.readFileSync(mainCnfPath, 'utf-8');
-    fs.writeFileSync(tempCnfPath, mainCnfContent + sanSection);
+    const finalKeyPath = path.join(issuedDir, `${commonName}.key`);
+    const finalCrtPath = path.join(issuedDir, `${commonName}.crt`);
 
     try {
-        await runCommand(`openssl genrsa -out "${serverKey}" 2048`, {}, caDir);
+        if (!fs.existsSync(issuedDir)) {
+            fs.mkdirSync(issuedDir, { recursive: true });
+        }
+
+        const mainCnfContent = fs.readFileSync(path.join(caDir, 'openssl.cnf'), 'utf-8');
+        let sanSection = `\n[v3_req_san]\nsubjectAltName = @alt_names\n\n[alt_names]\nDNS.1 = ${commonName}\n`;
+        if (altNames) {
+            altNames.split(',').map(s => s.trim()).filter(Boolean).forEach((name, index) => { sanSection += `DNS.${index + 2} = ${name}\n`; });
+        }
+        fs.writeFileSync(tempCnfPath, mainCnfContent + sanSection);
+
+        await runCommand(`openssl genrsa -out "${tempKeyPath}" 2048`);
+        await runCommand(`openssl req -new -key "${tempKeyPath}" -out "${tempCsrPath}" -subj "/CN=${commonName}" -config "${tempCnfPath}" -reqexts v3_req_san`);
         
-        // 3. KORRIGIERTER BEFEHL: Verwende nur die EINE, vollständige, temporäre Konfigurationsdatei
-        await runCommand(`openssl req -new -key "${serverKey}" -out "${serverCsr}" -subj "/CN=${commonName}" -config "${tempCnfPath}" -reqexts v3_req_san`, {}, caDir);
+        // --- HIER IST DIE KORREKTUR ---
+        await runCommand(`openssl ca -config "openssl.cnf" -extensions server_cert -days 365 -notext -md sha256 -in "${tempCsrPath}" -out "${tempCrtPath}" -passin env:CA_PASS -batch`, env, caDir);
         
-        // Der 'ca' Befehl nutzt 'copy_extensions', was jetzt dank des korrekten CSRs funktioniert
-        await runCommand(`openssl ca -config "openssl.cnf" -extensions server_cert -days 365 -notext -md sha256 -in "${serverCsr}" -out "${serverCrt}" -passin env:CA_PASS -batch`, env, caDir);
+        fs.renameSync(tempCrtPath, finalCrtPath);
+        fs.renameSync(tempKeyPath, finalKeyPath);
         
-        fs.renameSync(path.join(caDir, serverCrt), path.join(issuedDir, serverCrt));
-        fs.renameSync(path.join(caDir, serverKey), path.join(issuedDir, serverKey));
-        
-        const crtData = fs.readFileSync(path.join(issuedDir, serverCrt), 'utf-8');
-        const keyData = fs.readFileSync(path.join(issuedDir, serverKey), 'utf-8');
-        const certDetails = await runCommand(`openssl x509 -in "${path.join(issuedDir, serverCrt)}" -noout -serial -subject`);
+        if (fs.existsSync(tempCsrPath)) fs.unlinkSync(tempCsrPath);
+        if (fs.existsSync(tempCnfPath)) fs.unlinkSync(tempCnfPath);
+
+        const crtData = fs.readFileSync(finalCrtPath, 'utf-8');
+        const keyData = fs.readFileSync(finalKeyPath, 'utf-8');
+        const certDetails = await runCommand(`openssl x509 -in "${finalCrtPath}" -noout -serial -subject`);
         const serial = certDetails.match(/serial=(.*)/)[1];
+
         return { message: 'Server certificate issued.', serial, commonName, certificate: crtData, privateKey: keyData };
 
-    } finally {
-        // 4. Räume ALLE temporären Dateien auf
-        [serverCsr, tempCnfPath].forEach(f => {
-            const fullPath = path.join(caDir, f);
-            if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    } catch (error) {
+        [tempKeyPath, tempCsrPath, tempCrtPath, tempCnfPath].forEach(f => {
+            if (fs.existsSync(f)) fs.unlinkSync(f);
         });
+        throw error;
     }
 }
 
