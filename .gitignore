@@ -1,0 +1,7 @@
+/.env
+/bundle.js
+/ca_files
+/multi_ca_files
+/node_modules
+/openssl.cnf
+/project_bundle.txt

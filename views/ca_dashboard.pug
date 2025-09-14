@@ -1,0 +1,230 @@
+//- FILE: views/ca_dashboard.pug
+
+doctype html
+html(lang="de")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1.0")
+    title= `Dashboard: ${caName}`
+    style.
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 2rem; }
+      .container { max-width: 1200px; margin: auto; background: white; padding: 2.5rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+      h1, h2 { color: #2c3e50; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }
+      .breadcrumb { margin-bottom: 2rem; }
+      .breadcrumb a { color: #3498db; text-decoration: none; font-weight: bold; }
+      .message { padding: 1rem; margin-bottom: 1.5rem; border-radius: 4px; text-align: center; font-weight: bold; }
+      .message.success { background-color: #d4edda; color: #155724; }
+      .message.error { background-color: #f8d7da; color: #721c24; }
+      .actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 2rem; margin-bottom: 2rem; }
+      form { padding: 1.5rem; border: 1px solid #ddd; border-radius: 5px; background-color: #fafafa; }
+      .form-group { display: flex; flex-direction: column; margin-bottom: 1rem; }
+      label { font-weight: bold; margin-bottom: 0.5rem; }
+      input, textarea { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+      textarea { min-height: 80px; }
+      button { background-color: #3498db; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; }
+      button:hover { background-color: #2980b9; }
+      .btn-revoke { background-color: #e74c3c; padding: 5px 10px; font-size: 0.8rem; }
+      .btn-revoke:hover { background-color: #c0392b; }
+      .btn-snippet { background-color: #95a5a6; padding: 5px 10px; font-size: 0.8rem; }
+      .btn-snippet:hover { background-color: #7f8c8d; }
+      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+      th, td { padding: 12px; border: 1px solid #ddd; text-align: left; font-size: 0.9rem; vertical-align: middle; }
+      th { background-color: #ecf0f1; }
+      .status-V { color: green; font-weight: bold; }
+      .status-R { color: red; font-weight: bold; }
+      .status-E { color: #f39c12; font-weight: bold; }
+      small { color: #7f8c8d; }
+      /* Modal-Styles */
+      .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+      .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 700px; border-radius: 5px; }
+      .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
+      .close-btn:hover, .close-btn:focus { color: black; text-decoration: none; cursor: pointer; }
+      pre { background-color: #eee; padding: 1rem; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+      .snippet-options { margin-bottom: 1.5rem; }
+
+  body
+    .container
+      .breadcrumb
+        a(href="/") &larr; Zurück zur CA-Übersicht
+
+      h1= `Dashboard: ${caName}`
+
+      if message && message.length > 0
+        .message.success= message
+      if error && error.length > 0
+        .message.error= error
+
+      h2 Zertifikate ausstellen
+      .actions-grid
+        form(action=`/ca/${caName}/generate-pgp`, method="POST")
+          h3 PGP Schlüsselpaar generieren
+          .form-group
+            label(for="pgpName") Name:
+            input#pgpName(type="text", name="name", required)
+          .form-group
+            label(for="pgpEmail") E-Mail:
+            input#pgpEmail(type="email", name="email", required)
+          .form-group
+            label(for="pgpPassword") Passphrase (sehr sicher!):
+            input#pgpPassword(type="password", name="password", required)
+          button(type="submit") PGP-Schlüssel erstellen
+
+        form(action=`/ca/${caName}/issue-client`, method="POST")
+          h3 Client Zertifikat (.p12)
+          .form-group
+            label(for="clientCn") Common Name (z.B. User- oder E-Mail-Adresse):
+            input#clientCn(type="text", name="commonName", required)
+          .form-group
+            label(for="clientCaPassword") CA Passwort:
+            input#clientCaPassword(type="password", name="caPassword", required)
+          button(type="submit") Client-Zertifikat ausstellen
+
+        form(action=`/ca/${caName}/issue-server`, method="POST")
+          h3 Server Zertifikat (.pem/.key)
+          .form-group
+            label(for="serverCn") Common Name (Haupt-Domain):
+            input#serverCn(type="text", name="commonName", required)
+          .form-group
+            label(for="altNames") Alternative Domains (SANs, Komma-getrennt):
+            textarea#altNames(name="altNames", placeholder="z.B. www.domain.com, api.domain.com")
+          .form-group
+            label(for="serverCaPassword") CA Passwort:
+            input#serverCaPassword(type="password", name="caPassword", required)
+          button(type="submit") Server-Zertifikat ausstellen
+
+      h2 Verwaltete X.509 Zertifikate
+      table
+        thead
+          tr
+            th Status
+            th Typ
+            th Common Name
+            th Seriennummer
+            th Aktion
+        tbody
+          if x509Certs.length === 0
+            tr
+              td(colspan="5", style="text-align: center;") Noch keine Zertifikate ausgestellt.
+          else
+            each cert in x509Certs
+              tr
+                td
+                  - let statusClass = 'status-R', statusText = cert.status
+                  if cert.status === 'V'
+                    - statusClass = 'status-V', statusText = 'Gültig'
+                  else if cert.status === 'R'
+                    - statusClass = 'status-R', statusText = 'Widerrufen'
+                  else if cert.status === 'E'
+                    - statusClass = 'status-E', statusText = 'Abgelaufen'
+                  span(class=statusClass)= statusText
+                  if cert.status === 'R'
+                    br
+                    small= `am ${cert.revocationDate}`
+                td
+                  small= cert.type
+                td= cert.commonName
+                td
+                  small= cert.serial
+                td
+                  if cert.status === 'V'
+                    //- Download-Aktionen
+                    if cert.type === 'Client'
+                      form(action=`/ca/${caName}/download/x509/${cert.serial}/p12`, method="POST", style="display:inline;")
+                        button.btn-snippet(type="submit") Download .p12
+                    else if cert.type === 'Server'
+                      form(action=`/ca/${caName}/download/x509/${cert.serial}/zip`, method="POST", style="display:inline;")
+                        button.btn-snippet(type="submit") Download .zip
+                      button.btn-snippet(onclick=`openSnippetModal('${caName}', '${cert.serial}', '${cert.commonName}')`) Snippets
+
+                    //- Widerrufen-Aktion
+                    form(action=`/ca/${caName}/revoke-x509`, method="POST", style="display:inline-block; margin-left: 10px;")
+                      input(type="hidden", name="serial", value=cert.serial)
+                      input(type="password", name="caPassword", placeholder="CA Passwort", required, style="width: 120px; font-size: 0.8rem; padding: 5px;")
+                      button.btn-revoke(type="submit", onclick="return confirm('Sind Sie sicher?');") Widerrufen
+                  else
+                    span -
+
+      h2 Verwaltete PGP Schlüssel
+      table
+        thead
+          tr
+            th Name / E-Mail
+            th Fingerprint
+            th Erstellt
+            th Gültig bis
+            th Aktion
+        tbody
+          if pgpKeys.length === 0
+            tr
+              td(colspan="5", style="text-align: center;") Noch keine PGP-Schlüssel erstellt.
+          else
+            each key in pgpKeys
+              tr
+                td
+                  small= key.uids.join(', ')
+                td
+                  small= key.fingerprint
+                td
+                  small= key.created
+                td
+                  small= key.expires
+                td
+                  a.btn-snippet(href=`/ca/${caName}/pgp/${key.fingerprint}/pub`, target="_blank") Public Key
+
+    //- Modal-Fenster für Snippets
+    #snippetModal.modal
+      .modal-content
+        span.close-btn(onclick="closeSnippetModal()") &times;
+        h2 Konfigurations-Snippets für 
+          span#snippet-cn
+        .snippet-options
+          label(for="verifyClient") Client-Verifizierung (mTLS):
+          select#verifyClient(onchange="generateSnippets()")
+            option(value="off", selected) Aus (Standard für Webseiten)
+            option(value="on") An (Strikte Prüfung)
+            option(value="optional") Optional
+        h3 Nginx
+        pre
+          code#nginx-snippet Generiere Snippet...
+        h3 Apache
+        pre
+          code#apache-snippet Generiere Snippet...
+    
+    script.
+      const modal = document.getElementById("snippetModal");
+      let currentCaName = "";
+      let currentCommonName = "";
+
+      function openSnippetModal(caName, serial, commonName) {
+        currentCaName = caName;
+        currentCommonName = commonName;
+        document.getElementById("snippet-cn").textContent = commonName;
+        document.getElementById("verifyClient").value = "off";
+        generateSnippets();
+        modal.style.display = "block";
+      }
+
+      function closeSnippetModal() {
+        modal.style.display = "none";
+      }
+
+      async function generateSnippets() {
+        const verify = document.getElementById("verifyClient").value;
+        try {
+          const response = await fetch(`/api/ca/${currentCaName}/snippets/${currentCommonName}?verify=${verify}`);
+          if (!response.ok) throw new Error("Network response was not ok.");
+          const data = await response.json();
+          document.getElementById("nginx-snippet").textContent = data.nginx;
+          document.getElementById("apache-snippet").textContent = data.apache;
+        } catch (error) {
+          document.getElementById("nginx-snippet").textContent = "Fehler beim Laden der Snippets.";
+          document.getElementById("apache-snippet").textContent = "Fehler beim Laden der Snippets.";
+          console.error("Fetch error:", error);
+        }
+      }
+
+      window.onclick = function (event) {
+        if (event.target == modal) {
+          closeSnippetModal();
+        }
+      };

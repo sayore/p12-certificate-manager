@@ -1,0 +1,67 @@
+//- FILE: views/index.pug
+
+doctype html
+html(lang="de")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1.0")
+    title CA Master Control
+    style.
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 2rem; }
+      .container { max-width: 1000px; margin: auto; background: white; padding: 2.5rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+      h1, h2 { color: #2c3e50; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }
+      .message { padding: 1rem; margin-bottom: 1.5rem; border-radius: 4px; text-align: center; font-weight: bold; }
+      .message.success { background-color: #d4edda; color: #155724; }
+      .message.error { background-color: #f8d7da; color: #721c24; }
+      form { margin-bottom: 2rem; padding: 1.5rem; border: 1px solid #ddd; border-radius: 5px; background-color: #fafafa; }
+      .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      .form-group { display: flex; flex-direction: column; }
+      label { font-weight: bold; margin-bottom: 0.5rem; }
+      input { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+      button { background-color: #3498db; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-top: 1rem; }
+      button:hover { background-color: #2980b9; }
+      ul { list-style: none; padding: 0; }
+      li { background-color: #ecf0f1; margin-bottom: 10px; border-radius: 4px; }
+      li a { display: block; padding: 15px 20px; text-decoration: none; color: #2c3e50; font-weight: bold; }
+      li a:hover { background-color: #bdc3c7; }
+
+  body
+    .container
+      h1 CA Master Control
+
+      if message && message.length > 0
+        .message.success= message
+      if error && error.length > 0
+        .message.error= error
+
+      h2 Neue Certificate Authority erstellen
+      form(action="/create-ca", method="POST")
+        .form-grid
+          .form-group
+            label(for="caName") CA Name (Kurzname, keine Leerzeichen):
+            input#caName(type="text", name="caName", required, pattern="[a-zA-Z0-9_-]+")
+          .form-group
+            label(for="caPassword") CA Passwort (sehr sicher!):
+            input#caPassword(type="password", name="caPassword", required)
+          .form-group
+            label(for="country") Land (z.B. DE):
+            input#country(type="text", name="country", value="DE")
+          .form-group
+            label(for="state") Bundesland/Staat:
+            input#state(type="text", name="state", value="N/A")
+          .form-group
+            label(for="locality") Stadt:
+            input#locality(type="text", name="locality", value="N/A")
+          .form-group
+            label(for="organization") Organisation:
+            input#organization(type="text", name="organization", required)
+        button(type="submit") CA Erstellen
+
+      h2 Vorhandene CAs
+      ul
+        if cas.length === 0
+          p Noch keine CAs erstellt.
+        else
+          each ca in cas
+            li
+              a(href=`/ca/${ca.name}`)= ca.name
