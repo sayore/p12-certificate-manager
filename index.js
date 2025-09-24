@@ -1,3 +1,7 @@
+const logger = require('./util/logger');
+
+
+const chalk = require("chalk");
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
@@ -10,6 +14,28 @@ const cors = require('cors');
 const archiver = require('archiver');
 
 const app = express();
+
+let isTesting = false;
+app.post('/testing/start', (req, res) => {
+    isTesting = true;
+    logger.log(chalk.yellow.bold('\n--- Test-Modus aktiviert. Eingehender Web-Traffic wird blockiert. ---'));
+    res.status(200).send('Test mode activated.');
+});
+
+app.post('/testing/end', (req, res) => {
+    isTesting = false;
+    logger.log(chalk.green.bold('--- Test-Modus beendet. Server ist wieder voll erreichbar. ---'));
+    res.status(200).send('Test mode deactivated.');
+});
+logger.addLevel("route")
+app.use((req, res, next) => {
+  
+    logger.route(req.query)
+    if (isTesting && !req.headers['x-test-secret']) {
+        return res.status(503).send('Server is in test mode.');
+    }
+    next();
+});
 
 // --- Services importieren ---
 const caService = require('./services/caService');
@@ -319,7 +345,7 @@ app.get('/ca/:caName/download/x509/:serial/p12', webAuth, (req, res) => {
             throw new Error('.p12-Datei auf dem Dateisystem nicht gefunden. Wurde sie korrekt erstellt?');
         }
     } catch (error) {
-        console.error("P12 Download Error:", error);
+        logger.error("P12 Download Error:", error);
         return res.status(500).render('error_page', {
             caName: req.params.caName,
             errorMessage: `Download-Fehler: ${error.message}`,
@@ -360,7 +386,7 @@ app.post('/ca/:caName/pgp/:fingerprint/download-private', async (req, res) => {
         res.send(privateKeyBlock);
 
     } catch (error) {
-        console.error(`Download failed for PGP private key ${fingerprint}:`, error.message);
+        logger.error(`Download failed for PGP private key ${fingerprint}:`, error.message);
         // Wir rendern die Fehlerseite mit klarem Feedback.
         // Status 422: Unprocessable Entity - Die Anfrage war syntaktisch korrekt,
         // konnte aber aufgrund semantischer Fehler (falsches Passwort) nicht verarbeitet werden.
@@ -408,40 +434,26 @@ app.post('/ca/:caName/pgp/:fingerprint/show-password', async (req, res) => {
 
 app.get('/ca/:caName/download/x509/:serial/zip', webAuth, (req, res) => {
     const { caName, serial } = req.params;
-    console.log(`\n--- [DEBUG Download ZIP] START for CA '${caName}', Serial '${serial}' ---`);
 
     try {
         const commonName = getCommonNameBySerial(caName, serial);
         if (!commonName) {
-            console.error('[DEBUG Download ZIP] FAIL: Common Name nicht in der DB gefunden.');
             throw new Error('Zertifikat mit dieser Seriennummer nicht in der Datenbank gefunden.');
         }
-        console.log(`[DEBUG Download ZIP] OK: Common Name aus DB erhalten: '${commonName}'`);
 
         const issuedDir = path.join(caService.caBaseDir, caName, 'issued', commonName);
         const certFile = path.join(issuedDir, `${commonName}.crt`);
         const keyFile = path.join(issuedDir, `${commonName}.key`);
         const caCertFile = path.join(caService.caBaseDir, caName, 'ca.crt');
-
-        // --- HIER IST DAS ENTSCHEIDENDE DEBUGGING ---
-        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für .crt: ${certFile}`);
-        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für .key: ${keyFile}`);
-        console.log(`[DEBUG Download ZIP] Erwarteter Pfad für ca.crt: ${caCertFile}`);
         
         const certExists = fs.existsSync(certFile);
         const keyExists = fs.existsSync(keyFile);
         const caCertExists = fs.existsSync(caCertFile);
 
-        console.log(`[DEBUG Download ZIP] Prüfung: .crt existiert? -> ${certExists}`);
-        console.log(`[DEBUG Download ZIP] Prüfung: .key existiert? -> ${keyExists}`);
-        console.log(`[DEBUG Download ZIP] Prüfung: ca.crt existiert? -> ${caCertExists}`);
-        // ---------------------------------------------
-
         if (!certExists || !keyExists || !caCertExists) {
              throw new Error('Eine oder mehrere Zertifikatsdateien wurden auf dem Dateisystem nicht gefunden.');
         }
 
-        console.log(`[DEBUG Download ZIP] OK: Alle Dateien gefunden. Starte ZIP-Archivierung.`);
         const archive = archiver('zip', { zlib: { level: 9 } });
         
         archive.on('error', function(err) { throw err; });
@@ -455,14 +467,10 @@ app.get('/ca/:caName/download/x509/:serial/zip', webAuth, (req, res) => {
         archive.file(certFile, { name: `${sanitizedCommonName}_${serial}.crt` });
         archive.file(keyFile, { name: `${sanitizedCommonName}_${serial}.key` });
         archive.file(caCertFile, { name: 'ca.crt' });
-        
-        console.log(`[DEBUG Download ZIP] OK: Archivierung abgeschlossen.`);
-        console.log(`--- [DEBUG Download ZIP] END ---`);
+
         return archive.finalize();
 
     } catch (error) {
-        console.error(`[DEBUG Download ZIP] FAIL: Fehler im Catch-Block: ${error.message}`);
-        console.log(`--- [DEBUG Download ZIP] END ---`);
         return res.status(500).render('error_page', {
             caName: req.params.caName,
             errorMessage: `ZIP-Erstellungsfehler: ${error.message}`,
@@ -475,9 +483,19 @@ app.get('/ca/:caName/download/x509/:serial/zip', webAuth, (req, res) => {
 // --- SERVERSTART UND TEST-AUSFÜHRUNG ---
 // =======================================================
 app.listen(PORT, () => {
-    console.log(`CA Master Server running on http://localhost:${PORT}`);
+    logger.log(`CA Master Server running on http://localhost:${PORT}`);
+    if (process.env.RUN_TESTS === 'true') {
 
-    setTimeout(async () => {
-        runTest("e2e")
-    }, 200); 
+        logger.pauseDefaultOutput()
+        const collector = logger.createCollector()
+
+        runTest("e2e").then(()=>{
+          collector.print()
+        }).catch(e => {
+            logger.error('Test runner process failed:', e);
+            // Wichtig: Sorge dafür, dass der Server bei einem Fehler im Test beendet wird
+            process.exit(1); 
+        });
+        
+    }
 });

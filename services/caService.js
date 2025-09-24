@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runCommand } = require('./utils');
+const logger = require('../util/logger');
 
 const caBaseDir = path.join(__dirname, '..', 'multi_ca_files');
 

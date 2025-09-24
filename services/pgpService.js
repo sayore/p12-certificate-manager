@@ -3,6 +3,7 @@ const path = require('path');
 const { caBaseDir } = require('./caService');
 const { runJob } = require('./job-manager');
 const { runCommand, encrypt, decrypt } = require('./utils'); 
+const logger = require('../util/logger');
 
 // ----- FILE: services/pgpService.js -----
 
@@ -37,7 +38,7 @@ async function generatePgpKey(caName, name, email, pgpPassword, caPassword) {
 
         // Nur fortfahren, wenn der Job erfolgreich war
         if (completedJob.status !== 'completed') {
-            console.error(`GPG key generation job ${completedJob.id} failed, not saving secret.`);
+            logger.error(`GPG key generation job ${completedJob.id} failed, not saving secret.`);
             return;
         }
 
@@ -48,13 +49,13 @@ async function generatePgpKey(caName, name, email, pgpPassword, caPassword) {
         
         if (fingerprintMatch && fingerprintMatch[1]) {
             const fingerprint = fingerprintMatch[1];
-            console.log(`Successfully extracted fingerprint ${fingerprint} for new PGP key.`);
+            logger.log(`Successfully extracted fingerprint ${fingerprint} for new PGP key.`);
             const secretFile = path.join(gpgHome, `${fingerprint}.secret`);
             fs.writeFileSync(secretFile, encryptedPassword);
         } else {
             // Fallback: Wenn wir den Fingerprint nicht parsen können.
             // Dies ist ein Risiko, aber besser als nichts.
-            console.warn(`Could not parse fingerprint from GPG output for job ${completedJob.id}. Saving secret with email as name.`);
+            logger.warn(`Could not parse fingerprint from GPG output for job ${completedJob.id}. Saving secret with email as name.`);
             const secretFile = path.join(gpgHome, `${email}.secret`);
             fs.writeFileSync(secretFile, encryptedPassword);
         }

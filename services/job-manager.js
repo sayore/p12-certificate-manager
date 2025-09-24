@@ -1,11 +1,12 @@
 const { spawn } = require('child_process');
+const logger = require('../util/logger');
 
 const jobs = {}; // Simpler In-Memory Job-Speicher
 
 function runJob(command, env = {}, cwd = null, onComplete = null) {
     const jobId = `job-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    console.log(`Starting Job [${jobId}] in [${cwd}]: ${command}`);
+    logger.log(`Starting Job [${jobId}] in [${cwd}]: ${command}`);
 
     const job = {
         id: jobId,
@@ -25,7 +26,7 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
     child.stderr.on('data', (data) => job.output += data.toString());
 
     child.on('close', (code) => {
-        console.log(`Job [${jobId}] finished with code ${code}.`);
+        logger.log(`Job [${jobId}] finished with code ${code}.`);
         if (code === 0) {
             job.status = 'completed';
         } else {
@@ -35,7 +36,7 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
     });
 
     child.on('error', (err) => {
-        console.error(`Job [${jobId}] spawn error:`, err);
+        logger.error(`Job [${jobId}] spawn error:`, err);
         job.status = 'failed';
         job.error = err.message;
 
@@ -44,7 +45,7 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
             try {
                 onComplete(job);
             } catch (e) {
-                console.error(`Error in onComplete callback for job ${jobId}:`, e.message);
+                logger.error(`Error in onComplete callback for job ${jobId}:`, e.message);
                 // Optional: Den Job-Status auf einen speziellen Fehler setzen
                 job.status = 'failed_in_callback';
                 job.error = e.message;

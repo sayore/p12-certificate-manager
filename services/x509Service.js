@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { runCommand } = require('./utils');
 const { caBaseDir } = require('./caService');
+const logger = require('../util/logger');
 
 /**
  * Parst die OpenSSL index.txt Datenbank.

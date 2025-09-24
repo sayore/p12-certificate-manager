@@ -151,7 +151,7 @@ block content
         } catch (error) {
           document.getElementById("nginx-snippet").textContent = "Fehler beim Laden der Snippets.";
           document.getElementById("apache-snippet").textContent = "Fehler beim Laden der Snippets.";
-          console.error("Fetch error:", error);
+          logger.error("Fetch error:", error);
         }
       }
 

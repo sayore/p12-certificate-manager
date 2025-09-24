@@ -13,6 +13,7 @@
     "archiver": "^7.0.1",
     "axios": "^1.12.0",
     "axios-cookiejar-support": "^6.0.4",
+    "chalk": "^4.1.2",
     "cheerio": "^1.1.2",
     "clipboardy": "^4.0.0",
     "connect-flash": "^0.1.1",
@@ -24,6 +25,8 @@
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
     "jszip": "^3.10.1",
+    "log-update": "^4.0.0",
+    "ora": "^5.4.1",
     "pug": "^3.0.3",
     "tough-cookie": "^5.1.2"
   }
