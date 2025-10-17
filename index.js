@@ -285,7 +285,8 @@ app.post('/ca/:caName/generate-pgp', async (req, res) => {
     const { name, email, password, caPassword } = req.body;
     try {
          if (!password || !caPassword) throw new Error('PGP-Passwort und CA-Passwort werden benötigt.');
-        pgpService.generatePgpKey(caName, name, email, password, caPassword);
+        pgpService.generatePgpKey(caName, name, email, password, caPassword).;
+        
         req.flash('success', `PGP-Schlüsselerstellung wurde gestartet.`);
     } catch (error) {
         req.flash('error', `Fehler beim Starten der PGP-Schlüsselerstellung: ${error.message}`);
@@ -376,6 +377,7 @@ app.post('/ca/:caName/pgp/:fingerprint/download-private', async (req, res) => {
 
         const encryptedPassword = fs.readFileSync(secretFile, 'utf-8');
         const decryptedPgpPassword = decrypt(encryptedPassword, caPassword);
+        logger.log(encryptedPassword)
 
         // Exportiere den privaten Schlüssel mit dem entschlüsselten Passwort
         const privateKeyBlock = await pgpService.exportPgpPrivateKey(caName, fingerprint, decryptedPgpPassword);

@@ -28,6 +28,17 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
     child.on('close', (code) => {
         logger.log(`Job [${jobId}] finished with code ${code}.`);
         if (code === 0) {
+            if (onComplete) {
+                try {
+                    onComplete(job);
+                } catch (e) {
+                    logger.error(`Error in onComplete callback for job ${jobId}:`, e.message);
+                    // Optional: Den Job-Status auf einen speziellen Fehler setzen
+                    job.status = 'failed_in_callback';
+                    job.error = e.message;
+                }
+            }
+
             job.status = 'completed';
         } else {
             job.status = 'failed';

@@ -5,11 +5,7 @@ const { runJob } = require('./job-manager');
 const { runCommand, encrypt, decrypt } = require('./utils'); 
 const logger = require('../util/logger');
 
-// ----- FILE: services/pgpService.js -----
-
-// ... imports ...
-
-async function generatePgpKey(caName, name, email, pgpPassword, caPassword) {
+async function generatePgpKey(caName, name, email, pgpPassword, caPassword, onComplete=()=>{}) {
     const gpgHome = path.join(caBaseDir, caName, 'gpg');
     const paramFile = path.join(gpgHome, 'gpg-params.txt');
     
@@ -37,7 +33,7 @@ async function generatePgpKey(caName, name, email, pgpPassword, caPassword) {
         }
 
         // Nur fortfahren, wenn der Job erfolgreich war
-        if (completedJob.status !== 'completed') {
+        if (completedJob.status !== 'running') {
             logger.error(`GPG key generation job ${completedJob.id} failed, not saving secret.`);
             return;
         }
