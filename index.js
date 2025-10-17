@@ -285,7 +285,7 @@ app.post('/ca/:caName/generate-pgp', async (req, res) => {
     const { name, email, password, caPassword } = req.body;
     try {
          if (!password || !caPassword) throw new Error('PGP-Passwort und CA-Passwort werden benötigt.');
-        pgpService.generatePgpKey(caName, name, email, password, caPassword).;
+        pgpService.generatePgpKey(caName, name, email, password, caPassword);
         
         req.flash('success', `PGP-Schlüsselerstellung wurde gestartet.`);
     } catch (error) {
