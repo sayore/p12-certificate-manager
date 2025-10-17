@@ -1,5 +1,3 @@
-// ----- FILE: tests/e2e.test.js -----
-
 // Core-Bibliotheken
 const fs = require("fs");
 const path = require("path");
@@ -228,8 +226,6 @@ const calculateDepth = (id) => {
   return testStates[id].depth + 2;
 };
 
-// ----- FILE: tests/e2e.test.js -----
-
 async function runAllTests() {
     // --- Phase 1: Vorbereitung & Server-Check (mit normalem Logging) ---
     logger.log(chalk.blue.bold("--- Starting CA Management End-to-End Test Suite ---"));
@@ -309,7 +305,7 @@ async function runAllTests() {
 
     const uiInterval = setInterval(renderUI, 100);
     
-    // Test-Ausführungsfunktion (unverändert)
+    // Test-Ausführungsfunktion
     const runSingleTest = async (id) => {
         const test = tests[id];
         const state = testStates[id];
@@ -360,7 +356,7 @@ async function runAllTests() {
     // Test-Modus auf dem Server deaktivieren
     await client.post('/testing/end');
 
-    // Cleanup & Report (unverändert)
+    // Cleanup & Report
     const failedTests = testIds.filter((id) => testStates[id].status === "fail");
     const caPath = path.join(__dirname, "..", "multi_ca_files", testCaName);
     if (fs.existsSync(caPath)) {
@@ -376,7 +372,7 @@ async function runAllTests() {
         });
     }
 
-    // Interaktiver Teil (unverändert)
+    // Interaktiver Teil
     logger.log(chalk.yellow('\nPress "d" to show full debug log, any other key to exit.'));
     if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
