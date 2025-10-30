@@ -87,12 +87,12 @@ async function multiRetry(howManyTimes, msBetween, fn, ...args) {
   for (let i = 0; i <= howManyTimes; i++) {
     // Zählt 5 Sekunden lang in 0.1s Schritten
     let result = await fn(...args);
-    if (result===true) return { state: true, result };
-    if (!!result?.state) log.push(log);
+    if (result === true) return { state: true, result };
+    if (result && result.state === false) log.push(result.result);
     await sleep(msBetween);
   }
   return {
-    state: true,
+    state: false,
     result: "MultiRetry: Function did not respond successfully.",
     log
   };
