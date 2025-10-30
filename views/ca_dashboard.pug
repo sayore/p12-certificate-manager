@@ -47,13 +47,11 @@ block content
                 small= cert.serial
               td.actions-cell
                 if cert.status === 'V'
-                  //- Download
                   if cert.type === 'Client'
-                    a.btn.btn-secondary(href=`/ca/${caName}/download/x509/${cert.serial}/p12`) Download .p12
+                    a.btn.btn-secondary(href=`#`, data-ca-name=caName, data-serial=cert.serial, data-type='p12') Download .p12
                   else if cert.type === 'Server'
-                    a.btn.btn-secondary(href=`/ca/${caName}/download/x509/${cert.serial}/zip`) Download .zip
+                    a.btn.btn-secondary(href=`#`, data-ca-name=caName, data-serial=cert.serial, data-type='zip') Download .zip
                   
-                  //- Snippets (nur für Server)
                   if cert.type === 'Server'
                     button.btn.btn-secondary(onclick=`openSnippetModal('${caName}', '${cert.serial}', '${cert.commonName}')`) Snippets
                   

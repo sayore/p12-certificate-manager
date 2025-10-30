@@ -144,6 +144,39 @@ app.use(session({
     cookie: { secure: false } // In Produktion auf 'true' setzen, wenn HTTPS verwendet wird.
 }));
 app.use(flash());
+
+// Middleware for CA Password Caching
+const CA_PASSWORD_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+app.use((req, res, next) => {
+    // Ensure req.body exists
+    if (!req.body) {
+        req.body = {};
+    }
+
+    // Wenn ein Passwort im Body ist, speichere es in der Session.
+    if (req.body.caPassword) {
+        req.session.caPassword = {
+            value: req.body.caPassword,
+            timestamp: Date.now()
+        };
+    }
+    // Wenn kein Passwort im Body ist, aber in der Session, nutze es.
+    else if (req.session.caPassword && (Date.now() - req.session.caPassword.timestamp < CA_PASSWORD_TIMEOUT)) {
+        req.body.caPassword = req.session.caPassword.value;
+    }
+
+    // Touch the timestamp on any authenticated POST request to keep it alive
+    if (req.session.caPassword && req.method === 'POST' && req.originalUrl !== '/api/keep-alive') {
+        req.session.caPassword.timestamp = Date.now();
+    }
+    next();
+});
+
+app.post('/api/keep-alive', (req, res) => {
+    res.status(200).send('Session kept alive.');
+});
+
 app.use((req, res, next) => {
     res.locals.message = req.flash('success');
     res.locals.error = req.flash('error');
@@ -350,6 +383,74 @@ app.get('/ca/:caName/download/x509/:serial/p12', webAuth, (req, res) => {
         return res.status(500).render('error_page', {
             caName: req.params.caName,
             errorMessage: `Download-Fehler: ${error.message}`,
+            activePage: 'x509'
+        });
+    }
+});
+
+function getCertPaths(caName, serial, commonName = null) {
+    if (!commonName) {
+        commonName = getCommonNameBySerial(caName, serial);
+    }
+    if (!commonName) {
+        return null; // Certificate not found
+    }
+
+    const issuedDir = path.join(caService.caBaseDir, caName, 'issued', commonName);
+    return {
+        certFile: path.join(issuedDir, `${commonName}.crt`),
+        keyFile: path.join(issuedDir, `${commonName}.key`),
+        p12File: path.join(issuedDir, `${commonName}.p12`),
+        caCertFile: path.join(caService.caBaseDir, caName, 'ca.crt')
+    };
+}
+
+app.get('/ca/:caName/view/x509/:serial/:type', webAuth, (req, res) => {
+    const { caName, serial, type } = req.params;
+    try {
+        const commonName = getCommonNameBySerial(caName, serial);
+        if (!commonName) {
+            throw new Error('Zertifikat mit dieser Seriennummer nicht in der Datenbank gefunden.');
+        }
+
+        const paths = getCertPaths(caName, serial, commonName);
+        let filePath;
+        let fileTypeName;
+
+        switch (type) {
+            case 'crt':
+                filePath = paths.certFile;
+                fileTypeName = 'Certificate';
+                break;
+            case 'key':
+                filePath = paths.keyFile;
+                fileTypeName = 'Private Key';
+                break;
+            case 'ca':
+                filePath = paths.caCertFile;
+                fileTypeName = 'CA Certificate';
+                break;
+            default:
+                throw new Error('Ungültiger Dateityp angefordert.');
+        }
+
+        if (fs.existsSync(filePath)) {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            res.render('view_cert', {
+                caName,
+                serial,
+                commonName,
+                fileTypeName,
+                content,
+                activePage: 'x509'
+            });
+        } else {
+            throw new Error(`Datei ${path.basename(filePath)} wurde auf dem Dateisystem nicht gefunden.`);
+        }
+    } catch (error) {
+        return res.status(500).render('error_page', {
+            caName: req.params.caName,
+            errorMessage: `Fehler bei der Anzeige der Datei: ${error.message}`,
             activePage: 'x509'
         });
     }

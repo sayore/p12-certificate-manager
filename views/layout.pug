@@ -81,3 +81,47 @@ html(lang="de")
       if (document.querySelector('input[name="certType"]')) {
         handleCertTypeChange();
       }
+
+      // Keep-alive for CA Password
+      setInterval(() => {
+        fetch('/api/keep-alive', { method: 'POST' })
+          .then(response => {
+            if (!response.ok) {
+              console.error('Failed to keep session alive.');
+            }
+          });
+      }, 60000); // Jede Minute
+
+      // UI Switch for Download/View
+      document.addEventListener('DOMContentLoaded', () => {
+        const actionToggle = document.getElementById('action-toggle');
+        const currentAction = localStorage.getItem('certAction') || 'download';
+
+        if (actionToggle) {
+          actionToggle.checked = currentAction === 'view';
+
+          actionToggle.addEventListener('change', () => {
+            const action = actionToggle.checked ? 'view' : 'download';
+            localStorage.setItem('certAction', action);
+            updateActionLinks(action);
+          });
+        }
+
+        updateActionLinks(currentAction);
+      });
+
+      function updateActionLinks(action) {
+        document.querySelectorAll('a.btn[data-ca-name][data-serial]').forEach(link => {
+          const caName = link.dataset.caName;
+          const serial = link.dataset.serial;
+          const type = link.dataset.type;
+
+          if (action === 'view') {
+            link.textContent = `View ${type.toUpperCase()}`;
+            link.href = `/ca/${caName}/view/x509/${serial}/${type}`;
+          } else {
+            link.textContent = `Download ${type.toUpperCase()}`;
+            link.href = `/ca/${caName}/download/x509/${serial}/${type}`;
+          }
+        });
+      }

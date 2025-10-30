@@ -1,0 +1,24 @@
+//- FILE: views/view_cert.pug
+extends layout
+
+block content
+  - let pageTitle = `View ${fileTypeName}: ${commonName}`
+
+  .form-card
+    h3= `${fileTypeName} for ${commonName}`
+    p
+      strong Serial:
+      | #{serial}
+
+    textarea.code-display(readonly, rows="20")= content
+
+    button.btn.btn-primary(onclick="copyToClipboard()") Copy to Clipboard
+    a.btn.btn-secondary(href=`/ca/${caName}/x509`) Back to X.509 List
+
+  script.
+    function copyToClipboard() {
+      const textarea = document.querySelector('.code-display');
+      textarea.select();
+      document.execCommand('copy');
+      alert('Copied to clipboard!');
+    }
