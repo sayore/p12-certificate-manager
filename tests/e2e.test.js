@@ -76,16 +76,17 @@ const tests = {
             const commonName = `server-${Date.now()}.test.com`;
             const params = new URLSearchParams({ certType: 'server', commonName, altNames: `www.${commonName}`, caPassword: testCaPassword });
             await client.post(`/ca/${testCaName}/issue-cert`, params);
-            const getResponse = await client.get(`/ca/${testCaName}/x509`);
             let serverCertSerial;
-            await multiRetry((5), 200, async ()=>{
+            let log = await multiRetry((5), 200, async ()=>{
+              const getResponse = await client.get(`/ca/${testCaName}/x509`);
               const $ = cheerio.load(getResponse.data);
               const certRow = $(`td:contains("${commonName}")`).closest('tr');
-              if (certRow.length === 0) throw new Error('New server certificate not found in UI.');
+              if (certRow.length === 0) return {state: false, result: 'New server certificate not found in UI.'};
               serverCertSerial = certRow.find('td').eq(3).find('small').text().trim();
-              if (!serverCertSerial) throw new Error('Could not extract server serial.');
+              if (!serverCertSerial) return {state: false, result: 'Could not extract server serial.'};
+              return true
             })
-
+            if(log.state == false) throw new Error(log.log.join("\n"));
             // --- KORREKTUR ---
             return { serverCertSerial, commonName };
         }
@@ -248,7 +249,7 @@ async function runAllTests() {
     }
     if (!serverReady) {
         readinessSpinner.fail("Server did not become available.");
-        process.exit(1);
+        throw new Error("Server did not become available.");
     }
     readinessSpinner.succeed("Server is ready.");
 
@@ -259,7 +260,7 @@ async function runAllTests() {
         await client.post('/testing/start');
     } catch (e) {
         logger.error(chalk.red('FATAL: Could not activate test mode on server.'), e.message);
-        process.exit(1);
+        throw new Error('FATAL: Could not activate test mode on server.');
     }
 
     // --- Phase 3: Eigentliche Test-Ausführung (Server ist jetzt stumm) ---
@@ -372,23 +373,17 @@ async function runAllTests() {
         });
     }
 
-    // Interaktiver Teil
-    logger.log(chalk.yellow('\nPress "d" to show full debug log, any other key to exit.'));
-    if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true);
-        process.stdin.resume();
-        process.stdin.on("data", (key) => {
-            if (key.toString().toLowerCase() === "d") {
-                logger.log(chalk.gray("\n--- Full Debug Log ---"));
-                logger.log(fullLog);
-            }
-            process.exit(failedTests.length > 0 ? 1 : 0);
-        });
-    } else {
-        logger.log(chalk.gray("\n(Non-interactive session, exiting automatically)"));
-        process.exit(failedTests.length > 0 ? 1 : 0);
-    }
+    // Return the list of failed tests for the Jest runner
+    return failedTests;
 }
 
-// Start the whole process
-runAllTests();
+// Wrap the test run in a Jest test block
+describe('End-to-End Tests', () => {
+  it('should run the entire E2E test suite successfully', async () => {
+    const failedTests = await runAllTests();
+    if (failedTests.length > 0) {
+      const errorMessages = failedTests.map(id => `${tests[id].name}: ${testStates[id].error.message}`).join('\n');
+      throw new Error(`E2E tests failed:\n${errorMessages}`);
+    }
+  }, 60000);
+});
