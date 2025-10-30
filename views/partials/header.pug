@@ -3,6 +3,11 @@
 .header
   h1.header-title= title || "Dashboard"
   .theme-controls
+    .setting-switch
+      label.switch-label(for="action-toggle") Download / View
+      label.switch
+        input(type="checkbox", id="action-toggle")
+        span.slider.round
     label(for="accent-color-picker") Akzent
     input#accent-color-picker(type="color")
     button#theme-toggle.btn.btn-secondary Dark/Light
