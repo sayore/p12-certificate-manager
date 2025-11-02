@@ -66,7 +66,7 @@ const tests = {
             throw new Error(log.log.join("\n"))
             
             // --- KORREKTUR ---
-            return { clientCertSerial }; 
+            return { clientCertSerial, commonName };
         }
     },
     'issue-server-cert': {
@@ -133,7 +133,7 @@ const tests = {
         name: '[Download] Verify Client .p12',
         requires: ['issue-client-cert'],
         fn: async (results) => {
-            const { clientCertSerial } = results['issue-client-cert'];
+            const { clientCertSerial, commonName } = results['issue-client-cert'];
             const response = await client.get(`/ca/${testCaName}/download/x509/${clientCertSerial}/p12`, { responseType: 'arraybuffer' });
             if (response.headers['content-type'] !== 'application/x-pkcs12') throw new Error(`Expected content-type x-pkcs12`);
             if (Buffer.from(response.data).length < 100) throw new Error('Downloaded .p12 file is too small.');
