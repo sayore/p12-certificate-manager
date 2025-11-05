@@ -1,8 +1,16 @@
 const { spawn } = require('child_process');
 const logger = require('../util/logger');
 
-const jobs = {}; // Simpler In-Memory Job-Speicher
+const jobs = {}; // Simple in-memory job store.
 
+/**
+ * Runs a new job in a separate process.
+ * @param {string} command - The command to execute.
+ * @param {object} env - The environment variables for the job.
+ * @param {string} cwd - The working directory for the job.
+ * @param {function} onComplete - A callback function to execute when the job completes.
+ * @returns {object} - The job object.
+ */
 function runJob(command, env = {}, cwd = null, onComplete = null) {
     const jobId = `job-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
@@ -33,7 +41,6 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
                     onComplete(job);
                 } catch (e) {
                     logger.error(`Error in onComplete callback for job ${jobId}:`, e.message);
-                    // Optional: Den Job-Status auf einen speziellen Fehler setzen
                     job.status = 'failed_in_callback';
                     job.error = e.message;
                 }
@@ -51,13 +58,11 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
         job.status = 'failed';
         job.error = err.message;
 
-        // NEU: Führe den onComplete-Callback aus, wenn er existiert
         if (onComplete) {
             try {
                 onComplete(job);
             } catch (e) {
                 logger.error(`Error in onComplete callback for job ${jobId}:`, e.message);
-                // Optional: Den Job-Status auf einen speziellen Fehler setzen
                 job.status = 'failed_in_callback';
                 job.error = e.message;
             }
@@ -67,6 +72,11 @@ function runJob(command, env = {}, cwd = null, onComplete = null) {
     return job;
 }
 
+/**
+ * Retrieves a job by its ID.
+ * @param {string} jobId - The ID of the job to retrieve.
+ * @returns {object} - The job object, or undefined if not found.
+ */
 function getJob(jobId) {
     return jobs[jobId];
 }

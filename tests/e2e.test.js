@@ -13,8 +13,25 @@ const chalk = require("chalk");
 const logUpdate = require("log-update");
 
 // Lokale Hilfsfunktionen und Konfiguration
-const { client, config, multiRetry } = require("./test-utils");
+const { client, config } = require("./test-utils");
 const logger = require("../util/logger");
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function multiRetry(howManyTimes, msBetween, fn, ...args) {
+  let log = []
+  for (let i = 0; i <= howManyTimes; i++) {
+    let result = await fn(...args);
+    if (result === true) return { state: true, result };
+    if (result && result.state === false) log.push(result.result);
+    await sleep(msBetween);
+  }
+  return {
+    state: false,
+    result: "MultiRetry: Function did not respond successfully.",
+    log
+  };
+}
 
 // --- Globale Variablen, die zwischen den Tests geteilt werden ---
 const testCaName = `Test-CA-${Date.now()}`;
@@ -236,18 +253,16 @@ async function runAllTests() {
 
 // --- Phase 1: Server Readiness Check ---
     const readinessSpinner = ora("Waiting for server to be ready...").start();
-    let serverReady = false;
-    for (let i = 0; i < 15; i++) {
+    const serverReady = await multiRetry(30, 1000, async () => {
         try {
-            // Der axios-Client sendet jetzt den Header, daher sollte das klappen
-            await client.get("/", { timeout: 500 });
-            serverReady = true;
-            break;
+            await client.get("/", { timeout: 1000 });
+            return true;
         } catch (e) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            return { state: false, result: 'Server not ready yet.' };
         }
-    }
-    if (!serverReady) {
+    });
+
+    if (!serverReady.state) {
         readinessSpinner.fail("Server did not become available.");
         throw new Error("Server did not become available.");
     }
